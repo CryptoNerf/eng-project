@@ -31,7 +31,7 @@ jobs:
         working-directory: client
         run: npm run build
         env:
-          VITE_BASE: /molly/
+          VITE_BASE: /eng-project/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
