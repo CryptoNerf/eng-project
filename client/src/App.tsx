@@ -673,10 +673,10 @@ function Header({ user, repo, onLinkGoogle, onHome, onDict, dictActive }: Header
           английский по YouTube
         </span>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex min-w-0 items-center gap-2">
           <button
             onClick={onDict}
-            className={`border px-3 py-1.5 text-xs font-bold transition ${
+            className={`shrink-0 border px-3 py-1.5 text-xs font-bold transition ${
               dictActive
                 ? 'border-ink-900 bg-ink-900 text-white'
                 : 'border-ink-900 bg-white text-ink-900 hover:bg-ink-100'
@@ -686,22 +686,25 @@ function Header({ user, repo, onLinkGoogle, onHome, onDict, dictActive }: Header
           </button>
           {user && !user.isAnonymous ? (
             <span
-              className="inline-flex items-center gap-2 border border-ink-900 bg-[#cfe36e] px-3 py-1.5 text-xs font-bold text-ink-900"
+              className="flex min-w-0 max-w-[38vw] items-center gap-1 border border-ink-900 bg-[#cfe36e] px-2.5 py-1.5 text-xs font-bold text-ink-900 sm:max-w-[200px]"
               title={user.email || ''}
             >
-              ✓ {user.displayName?.split(' ')[0] || user.email || 'аккаунт'}
+              <span className="shrink-0">✓</span>
+              <span className="truncate">
+                {user.displayName?.split(' ')[0] || user.email?.split('@')[0] || 'аккаунт'}
+              </span>
             </span>
           ) : user ? (
             <button
               onClick={onLinkGoogle}
-              className="border border-ink-900 bg-white px-3 py-1.5 text-xs font-bold text-ink-900 transition hover:bg-ink-100"
+              className="shrink-0 border border-ink-900 bg-white px-3 py-1.5 text-xs font-bold text-ink-900 transition hover:bg-ink-100"
               title="Синхронизировать прогресс между устройствами"
             >
               войти через Google
             </button>
           ) : repo ? (
             <span
-              className="border border-dashed border-ink-400 bg-white px-3 py-1.5 text-xs font-medium text-ink-400"
+              className="shrink-0 border border-dashed border-ink-400 bg-white px-3 py-1.5 text-xs font-medium text-ink-400"
               title="Облако недоступно, данные хранятся в этом браузере"
             >
               локально

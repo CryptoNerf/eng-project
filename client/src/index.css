@@ -38,6 +38,19 @@ body {
   /* Flat paper background — no gradients anywhere */
   background: #f4f2ea;
   min-height: 100vh;
+  /* Guard against stray horizontal overflow on mobile without breaking
+     position: sticky (clip, unlike hidden, doesn't create a scroll container) */
+  overflow-x: clip;
+}
+
+/* iOS Safari auto-zooms when a focused input's font-size is < 16px.
+   Keep form controls at 16px on small screens to preserve the app feel. */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
 }
 
 /* Thin, flat scrollbars */

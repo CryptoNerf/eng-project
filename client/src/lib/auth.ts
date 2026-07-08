@@ -46,16 +46,35 @@ export function watchUser(cb: (user: User | null) => void): () => void {
   });
 }
 
+/** Mobile browsers and installed PWAs: a popup gets backgrounded when Google's
+ * 2FA sends the user to another app (YouTube), which breaks the flow. A
+ * full-page redirect survives app-switching, so prefer it there. */
+function prefersRedirect(): boolean {
+  if (typeof window === 'undefined') return false;
+  const standalone =
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+    // iOS Safari legacy standalone flag
+    (window.navigator as unknown as { standalone?: boolean }).standalone === true;
+  const mobileUA = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  return standalone || mobileUA;
+}
+
 /**
  * Upgrade the anonymous account to a Google account (progress is kept).
- * Popup first; environments that block popups (installed PWA on iOS/Android)
- * fall back to a full-page redirect. If this Google account is already a
- * user, switch to it instead.
+ * On mobile/PWA go straight to a full-page redirect; on desktop use a popup
+ * and fall back to redirect if it's blocked. If this Google account is
+ * already a user, switch to it instead.
  */
 export async function linkGoogle(): Promise<User> {
   const user = auth.currentUser;
   if (!user) throw new Error('Нет активной сессии.');
   const provider = new GoogleAuthProvider();
+
+  if (prefersRedirect()) {
+    await linkWithRedirect(user, provider); // page navigates away; result handled on return
+    return user; // unreachable in practice
+  }
+
   try {
     const cred = await linkWithPopup(user, provider);
     return cred.user;
