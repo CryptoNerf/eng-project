@@ -1,25 +1,31 @@
 import {
+  EmailAuthProvider,
   GoogleAuthProvider,
   getRedirectResult,
+  isSignInWithEmailLink,
+  linkWithCredential,
   linkWithPopup,
   linkWithRedirect,
   onAuthStateChanged,
+  sendSignInLinkToEmail,
   signInAnonymously,
   signInWithCredential,
+  signInWithEmailLink,
   type User,
 } from 'firebase/auth';
 import { auth } from './firebase';
+
+const EMAIL_KEY = 'molly.emailForSignIn';
 
 /**
  * Subscribe to auth state; silently create an anonymous account on first
  * visit. If auth is unreachable/disabled, reports null (app falls back to
  * localStorage mode). Also completes a pending Google link after a redirect
- * flow (mobile PWA path).
+ * flow (desktop popup-blocked path).
  */
 export function watchUser(cb: (user: User | null) => void): () => void {
   let triedAnon = false;
 
-  // Completes linkWithRedirect started on a previous page load (mobile).
   getRedirectResult(auth).catch(async (e) => {
     const err = e as { code?: string };
     if (err.code === 'auth/credential-already-in-use') {
@@ -46,35 +52,16 @@ export function watchUser(cb: (user: User | null) => void): () => void {
   });
 }
 
-/** Mobile browsers and installed PWAs: a popup gets backgrounded when Google's
- * 2FA sends the user to another app (YouTube), which breaks the flow. A
- * full-page redirect survives app-switching, so prefer it there. */
-function prefersRedirect(): boolean {
-  if (typeof window === 'undefined') return false;
-  const standalone =
-    window.matchMedia?.('(display-mode: standalone)').matches ||
-    // iOS Safari legacy standalone flag
-    (window.navigator as unknown as { standalone?: boolean }).standalone === true;
-  const mobileUA = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  return standalone || mobileUA;
-}
-
 /**
- * Upgrade the anonymous account to a Google account (progress is kept).
- * On mobile/PWA go straight to a full-page redirect; on desktop use a popup
- * and fall back to redirect if it's blocked. If this Google account is
- * already a user, switch to it instead.
+ * Upgrade the anonymous account to a Google account via popup (progress is
+ * kept). Popups are the Firebase-recommended method when the app isn't hosted
+ * on the auth domain. If the account already exists, switch to it. Falls back
+ * to redirect only if the popup is blocked (desktop).
  */
 export async function linkGoogle(): Promise<User> {
   const user = auth.currentUser;
   if (!user) throw new Error('Нет активной сессии.');
   const provider = new GoogleAuthProvider();
-
-  if (prefersRedirect()) {
-    await linkWithRedirect(user, provider); // page navigates away; result handled on return
-    return user; // unreachable in practice
-  }
-
   try {
     const cred = await linkWithPopup(user, provider);
     return cred.user;
@@ -82,20 +69,67 @@ export async function linkGoogle(): Promise<User> {
     const err = e as { code?: string };
     if (err.code === 'auth/credential-already-in-use') {
       const cred = GoogleAuthProvider.credentialFromError(e as never);
-      if (cred) {
-        const res = await signInWithCredential(auth, cred);
-        return res.user;
-      }
+      if (cred) return (await signInWithCredential(auth, cred)).user;
     }
     if (
       err.code === 'auth/popup-blocked' ||
-      err.code === 'auth/popup-closed-by-user' ||
-      err.code === 'auth/operation-not-supported-in-this-environment' ||
-      err.code === 'auth/cancelled-popup-request'
+      err.code === 'auth/operation-not-supported-in-this-environment'
     ) {
-      await linkWithRedirect(user, provider); // page navigates away
-      return user; // unreachable in practice
+      await linkWithRedirect(user, provider);
+      return user; // navigates away
     }
     throw e;
   }
+}
+
+/* ---------------- Email-link (passwordless) — reliable on iOS/PWA -------- */
+
+/** Send a one-time sign-in link to the given email. */
+export async function sendEmailLink(email: string): Promise<void> {
+  const url = window.location.origin + window.location.pathname;
+  await sendSignInLinkToEmail(auth, email, { url, handleCodeInApp: true });
+  window.localStorage.setItem(EMAIL_KEY, email);
+}
+
+/** True if the current page URL is a Firebase email sign-in link. */
+export function pendingEmailLink(): boolean {
+  return isSignInWithEmailLink(auth, window.location.href);
+}
+
+/**
+ * Complete an email-link sign-in if the URL carries one. Links to the current
+ * anonymous account when possible (keeps progress); if that email already has
+ * an account, signs into it instead. Returns true if a sign-in happened.
+ */
+export async function completeEmailLink(promptForEmail: () => string | null): Promise<boolean> {
+  if (!isSignInWithEmailLink(auth, window.location.href)) return false;
+  const href = window.location.href;
+  let email = window.localStorage.getItem(EMAIL_KEY) || '';
+  if (!email) email = promptForEmail() || '';
+  if (!email) return false;
+
+  const cred = EmailAuthProvider.credentialWithLink(email, href);
+  const user = auth.currentUser;
+  try {
+    if (user && user.isAnonymous) {
+      await linkWithCredential(user, cred);
+    } else {
+      await signInWithEmailLink(auth, email, href);
+    }
+  } catch (e) {
+    const err = e as { code?: string };
+    if (
+      err.code === 'auth/credential-already-in-use' ||
+      err.code === 'auth/email-already-in-use'
+    ) {
+      await signInWithEmailLink(auth, email, href);
+    } else {
+      throw e;
+    }
+  } finally {
+    window.localStorage.removeItem(EMAIL_KEY);
+    // strip the oobCode query so a refresh doesn't re-trigger the flow
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+  return true;
 }

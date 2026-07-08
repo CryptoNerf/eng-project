@@ -3,7 +3,8 @@ import type { User } from 'firebase/auth';
 import { fetchTranscript, translateBatch, ApiError } from './lib/api';
 import { buildCards, UNRANKED } from './lib/words';
 import { initialSrs, isDue, isLearnedSrs, review } from './lib/srs';
-import { watchUser, linkGoogle } from './lib/auth';
+import { auth } from './lib/firebase';
+import { watchUser, completeEmailLink, pendingEmailLink } from './lib/auth';
 import { track, identify } from './lib/analytics';
 import {
   cloudRepo,
@@ -41,6 +42,8 @@ import { WordCard } from './components/WordCard';
 import { StudyView } from './components/StudyView';
 import { Dictionary } from './components/Dictionary';
 import { Logo } from './components/Logo';
+import { IngestOverlay } from './components/IngestOverlay';
+import { LoginModal } from './components/LoginModal';
 import { BrainIcon } from './components/Icons';
 
 const DEFAULT_FILTER: Difficulty[] = ['medium', 'hard'];
@@ -55,6 +58,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [translating, setTranslating] = useState(false);
+  // ingest = the slow, opaque "fetch subtitles" phase; show a timed overlay
+  const [ingesting, setIngesting] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [tProgress, setTProgress] = useState<{ done: number; total: number } | null>(null);
 
   const [words, setWords] = useState<WordsMap>(new Map());
   const [stats, setStats] = useState<Stats>({ days: {} });
@@ -64,10 +71,12 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('frequency');
   const [studyCards, setStudyCards] = useState<StudyCard[] | null>(null);
+  const [showLogin, setShowLogin] = useState(false);
 
   // token guards against applying async results from a previous video
   const token = useRef(0);
   const deepLinkHandled = useRef(false);
+  const emailLinkHandled = useRef(false);
   const deckCache = useRef(new Map<string, Deck>());
 
   /* ---------- auth → repo ---------- */
@@ -80,11 +89,32 @@ export default function App() {
     return unsub;
   }, []);
 
+  // tick the elapsed-seconds counter while ingesting
+  useEffect(() => {
+    if (!ingesting) return;
+    setElapsed(0);
+    const start = Date.now();
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 500);
+    return () => clearInterval(t);
+  }, [ingesting]);
+
   /* ---------- when repo is ready: migrate, load everything ---------- */
   useEffect(() => {
     if (!repo) return;
     let cancelled = false;
     (async () => {
+      // Complete an email-link sign-in if we returned via one (before loading data)
+      if (!emailLinkHandled.current && pendingEmailLink()) {
+        emailLinkHandled.current = true;
+        try {
+          await completeEmailLink(() =>
+            window.prompt('Введите e-mail, на который пришла ссылка для входа:'),
+          );
+          return; // auth state will change → repo re-inits → effect reruns cleanly
+        } catch (e) {
+          console.warn('Не удалось завершить вход по ссылке:', e);
+        }
+      }
       try {
         await migrateLocalToCloud(repo);
       } catch (e) {
@@ -129,6 +159,7 @@ export default function App() {
   async function handleSubmit(url: string) {
     if (!repo) return;
     setLoading(true);
+    setIngesting(true);
     setError(null);
     const myToken = ++token.current;
     try {
@@ -137,6 +168,7 @@ export default function App() {
       if (cards.length === 0) {
         throw new ApiError('В субтитрах не нашлось слов для изучения.');
       }
+      setIngesting(false);
 
       // Reuse saved translations for the same video
       const existing = await repo.loadDeck(t.videoId).catch(() => null);
@@ -180,6 +212,7 @@ export default function App() {
       translateAllWords(newDeck, myToken);
     } catch (e) {
       setLoading(false);
+      setIngesting(false);
       const msg = e instanceof ApiError ? e.message : 'Что-то пошло не так. Попробуйте ещё раз.';
       track('video_add_failed', { code: e instanceof ApiError ? e.code : 'UNKNOWN' });
       setError(msg);
@@ -192,6 +225,7 @@ export default function App() {
     const missing = target.cards.filter((c) => !c.translation);
     if (missing.length === 0) return;
     setTranslating(true);
+    setTProgress({ done: 0, total: missing.length });
     const CHUNK = 25;
     let latestCards: Card[] | null = null;
     for (let i = 0; i < missing.length; i += CHUNK) {
@@ -204,6 +238,7 @@ export default function App() {
         continue;
       }
       if (token.current !== myToken) return;
+      setTProgress({ done: Math.min(i + CHUNK, missing.length), total: missing.length });
       setDeck((prev) => {
         if (!prev || prev.videoId !== target.videoId) return prev;
         const map = new Map(chunk.map((c, j) => [c.id, translations[j]]));
@@ -216,6 +251,7 @@ export default function App() {
     }
     if (token.current === myToken) {
       setTranslating(false);
+      setTProgress(null);
       if (latestCards) {
         repo
           .saveCards(target.videoId, latestCards)
@@ -484,16 +520,15 @@ export default function App() {
     }
   }
 
-  async function handleLinkGoogle() {
-    try {
-      const u = await linkGoogle();
+  // Linking adds a provider to the same uid, so onAuthStateChanged may not
+  // fire — refresh the header state from the current user explicitly.
+  function afterLogin() {
+    const u = auth.currentUser;
+    if (u) {
       setUser({ ...u } as User);
       setRepo(cloudRepo(u.uid));
-      track('google_linked');
-    } catch (e) {
-      console.warn('Вход через Google не удался:', e);
-      setError('Вход через Google не удался. Попробуйте ещё раз.');
     }
+    track('google_linked');
   }
 
   function goHome() {
@@ -521,7 +556,7 @@ export default function App() {
       <Header
         user={user}
         repo={repo}
-        onLinkGoogle={handleLinkGoogle}
+        onLogin={() => setShowLogin(true)}
         onHome={goHome}
         onDict={() => {
           setDeck(null);
@@ -560,7 +595,9 @@ export default function App() {
           {translating && (
             <div className="mx-auto mb-4 flex max-w-6xl items-center gap-2 text-sm text-ink-400">
               <span className="h-3.5 w-3.5 rounded-full border-2 border-ink-200 border-t-ink-900 animate-spin-slow" />
-              Переводим слова…
+              {tProgress
+                ? `Переводим слова: ${tProgress.done} из ${tProgress.total}`
+                : 'Переводим слова…'}
             </div>
           )}
 
@@ -645,6 +682,12 @@ export default function App() {
           onClose={() => setStudyCards(null)}
         />
       )}
+
+      {ingesting && <IngestOverlay elapsed={elapsed} />}
+
+      {showLogin && (
+        <LoginModal onClose={() => setShowLogin(false)} onGoogleLinked={afterLogin} />
+      )}
     </>
   );
 }
@@ -658,35 +701,36 @@ function mergeSources(prev: string[] | undefined, videoId?: string): string[] {
 interface HeaderProps {
   user: User | null;
   repo: Repo | null;
-  onLinkGoogle: () => void;
+  onLogin: () => void;
   onHome: () => void;
   onDict: () => void;
   dictActive: boolean;
 }
 
-function Header({ user, repo, onLinkGoogle, onHome, onDict, dictActive }: HeaderProps) {
+function Header({ user, repo, onLogin, onHome, onDict, dictActive }: HeaderProps) {
   return (
-    <header className="sticky top-0 z-30 border-b border-ink-900 bg-[#f4f2ea]">
-      <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
+    <header className="border-b border-ink-900 bg-[#f4f2ea] pt-[env(safe-area-inset-top)]">
+      <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4">
         <Logo onHome={onHome} />
-        <span className="hidden text-sm text-ink-500 sm:inline">
+        <span className="hidden text-sm text-ink-500 lg:inline">
           английский по YouTube
         </span>
 
-        <div className="ml-auto flex min-w-0 items-center gap-2">
+        <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
           <button
             onClick={onDict}
-            className={`shrink-0 border px-3 py-1.5 text-xs font-bold transition ${
+            className={`shrink-0 border px-2.5 py-1.5 text-xs font-bold transition sm:px-3 ${
               dictActive
                 ? 'border-ink-900 bg-ink-900 text-white'
                 : 'border-ink-900 bg-white text-ink-900 hover:bg-ink-100'
             }`}
           >
-            мой словарь
+            <span className="sm:hidden">словарь</span>
+            <span className="hidden sm:inline">мой словарь</span>
           </button>
           {user && !user.isAnonymous ? (
             <span
-              className="flex min-w-0 max-w-[38vw] items-center gap-1 border border-ink-900 bg-[#cfe36e] px-2.5 py-1.5 text-xs font-bold text-ink-900 sm:max-w-[200px]"
+              className="flex min-w-0 max-w-[34vw] items-center gap-1 border border-ink-900 bg-[#cfe36e] px-2 py-1.5 text-xs font-bold text-ink-900 sm:max-w-[200px] sm:px-2.5"
               title={user.email || ''}
             >
               <span className="shrink-0">✓</span>
@@ -696,15 +740,15 @@ function Header({ user, repo, onLinkGoogle, onHome, onDict, dictActive }: Header
             </span>
           ) : user ? (
             <button
-              onClick={onLinkGoogle}
-              className="shrink-0 border border-ink-900 bg-white px-3 py-1.5 text-xs font-bold text-ink-900 transition hover:bg-ink-100"
-              title="Синхронизировать прогресс между устройствами"
+              onClick={onLogin}
+              className="shrink-0 border border-ink-900 bg-white px-2.5 py-1.5 text-xs font-bold text-ink-900 transition hover:bg-ink-100 sm:px-3"
+              title="Войти — синхронизировать прогресс между устройствами"
             >
-              войти через Google
+              войти
             </button>
           ) : repo ? (
             <span
-              className="shrink-0 border border-dashed border-ink-400 bg-white px-3 py-1.5 text-xs font-medium text-ink-400"
+              className="shrink-0 border border-dashed border-ink-400 bg-white px-2.5 py-1.5 text-xs font-medium text-ink-400 sm:px-3"
               title="Облако недоступно, данные хранятся в этом браузере"
             >
               локально

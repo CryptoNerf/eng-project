@@ -106,7 +106,7 @@ export function StudyView({ cards, onGrade, onKnown, onClose }: Props) {
       </div>
 
       {/* Body */}
-      <div className="flex flex-1 items-center justify-center px-4 pb-10">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-1">
         {!current ? (
           <div className="animate-fade-up border-2 border-ink-900 bg-white p-10 text-center">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center border-2 border-ink-900 bg-[#cfe36e] text-ink-900">
@@ -124,10 +124,10 @@ export function StudyView({ cards, onGrade, onKnown, onClose }: Props) {
             </button>
           </div>
         ) : (
-          <div className="w-full max-w-xl animate-fade-up">
+          <div className="flex max-h-full w-full max-w-xl flex-col animate-fade-up">
             <div
               onClick={() => !revealed && setRevealed(true)}
-              className={`flex min-h-[20rem] flex-col border-2 border-ink-900 bg-white p-8 ${
+              className={`flex min-h-0 flex-1 flex-col overflow-y-auto border-2 border-ink-900 bg-white p-5 sm:p-8 ${
                 !revealed ? 'cursor-pointer' : ''
               }`}
             >
@@ -196,14 +196,14 @@ export function StudyView({ cards, onGrade, onKnown, onClose }: Props) {
               </div>
             </div>
 
-            {/* Grade buttons */}
+            {/* Grade buttons — always visible below the (scrollable) card */}
             {revealed && (
-              <div className="mt-5 grid grid-cols-4 gap-2 animate-fade-up">
+              <div className="mt-3 grid shrink-0 grid-cols-4 gap-2 animate-fade-up">
                 {BUTTONS.map((b) => (
                   <button
                     key={b.key}
                     onClick={() => grade(b.key)}
-                    className={`flex flex-col items-center border-2 border-ink-900 py-3 font-bold transition hover:opacity-90 ${b.cls}`}
+                    className={`flex flex-col items-center border-2 border-ink-900 py-2.5 text-sm font-bold transition hover:opacity-90 ${b.cls}`}
                   >
                     {b.label}
                     <span className="mt-0.5 text-[11px] font-normal opacity-70">{b.hint}</span>
