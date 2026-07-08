@@ -1,0 +1,17 @@
+{
+  "name": "molly-functions",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "postinstall": "node scripts/download-ytdlp.js && node scripts/setup-bgutil.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0",
+    "firebase-functions": "^6.4.0"
+  }
+}

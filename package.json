@@ -1,0 +1,23 @@
+{
+  "name": "molly",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Учи английский по субтитрам YouTube-видео: карточки слово/перевод/контекст, SRS, экспорт в Anki.",
+  "scripts": {
+    "dev": "npm --prefix client run dev",
+    "dev:legacy": "concurrently -n server,client -c blue,magenta \"node server/index.js\" \"npm --prefix client run dev\"",
+    "deploy:functions": "firebase deploy --only functions,firestore:rules --force",
+    "build": "npm --prefix client run build",
+    "preview": "npm --prefix client run preview",
+    "setup": "npm install && npm --prefix server install && npm --prefix client install && npm run setup:ytdlp",
+    "setup:ytdlp": "node server/scripts/download-ytdlp.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "firebase-tools": "^15.22.4"
+  },
+  "dependencies": {
+    "firebase": "^12.15.0"
+  }
+}

@@ -1,0 +1,108 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Typewriter/zine look: everything is monospace (IBM Plex Mono has Cyrillic) */
+  --font-sans: 'IBM Plex Mono', 'PT Mono', ui-monospace, monospace;
+
+  --color-ink-50: #f7f5ef;
+  --color-ink-100: #eceae2;
+  --color-ink-200: #d9d6cb;
+  --color-ink-300: #b9b5a7;
+  --color-ink-400: #8f8b7e;
+  --color-ink-500: #6b675c;
+  --color-ink-600: #4c493f;
+  --color-ink-700: #33312a;
+  --color-ink-800: #201f1a;
+  --color-ink-900: #121110;
+
+  /* Flat accent papers */
+  --color-marker: #f7dd4b; /* yellow marker / logo paper */
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  color: var(--color-ink-900);
+  /* Flat paper background — no gradients anywhere */
+  background: #f4f2ea;
+  min-height: 100vh;
+}
+
+/* Thin, flat scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-300) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-ink-300);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+@keyframes molly-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-up {
+  animation: molly-fade-up 0.4s ease both;
+}
+
+@keyframes molly-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin-slow {
+  animation: molly-spin 0.9s linear infinite;
+}
+
+/* Card flip */
+.flip-card {
+  perspective: 1400px;
+}
+.flip-inner {
+  transform-style: preserve-3d;
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.flip-inner.is-flipped {
+  transform: rotateY(180deg);
+}
+.flip-face {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.flip-back {
+  transform: rotateY(180deg);
+}
+
+/* Paper scraps: tiny deterministic tilt; on hover the card straightens and
+   grows just a touch — the only hover effect, no shadows */
+.paper-tilt {
+  transform: rotate(var(--tilt, 0deg));
+  transition: transform 0.25s ease;
+}
+.paper-tilt:hover {
+  transform: rotate(0deg) scale(1.02);
+}

@@ -1,0 +1,11 @@
+node_modules/
+client/dist/
+server/bin/
+functions/bin/
+functions/bgutil/
+functions/plugins/
+*.log
+.DS_Store
+.env
+.firebase/
+client/dev-dist/
