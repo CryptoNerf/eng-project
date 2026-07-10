@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
-import { fetchTranscript, translateBatch, ApiError } from './lib/api';
+import { fetchTranscript, translateBatch, warmupIngest, ApiError } from './lib/api';
 import { buildCards, UNRANKED } from './lib/words';
 import { initialSrs, isDue, isLearnedSrs, review } from './lib/srs';
 import { auth } from './lib/firebase';
@@ -58,8 +58,9 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [translating, setTranslating] = useState(false);
-  // ingest = the slow, opaque "fetch subtitles" phase; show a timed overlay
-  const [ingesting, setIngesting] = useState(false);
+  // long operations show a timed overlay: 'ingest' (fetch subtitles) or
+  // 'open' (loading a saved deck / building a review session)
+  const [busyKind, setBusyKind] = useState<'ingest' | 'open' | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [tProgress, setTProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -72,12 +73,23 @@ export default function App() {
   const [sort, setSort] = useState<SortKey>('frequency');
   const [studyCards, setStudyCards] = useState<StudyCard[] | null>(null);
   const [showLogin, setShowLogin] = useState(false);
+  // Mounting 300+ flip-cards at once janks phones for seconds — render the
+  // grid incrementally instead.
+  const [renderCount, setRenderCount] = useState(48);
 
   // token guards against applying async results from a previous video
   const token = useRef(0);
   const deepLinkHandled = useRef(false);
   const emailLinkHandled = useRef(false);
   const deckCache = useRef(new Map<string, Deck>());
+  const warmed = useRef(false);
+
+  /** Boot the ingest function while the user is still pasting the URL. */
+  function warmIngest() {
+    if (warmed.current) return;
+    warmed.current = true;
+    warmupIngest();
+  }
 
   /* ---------- auth → repo ---------- */
   useEffect(() => {
@@ -89,14 +101,19 @@ export default function App() {
     return unsub;
   }, []);
 
-  // tick the elapsed-seconds counter while ingesting
+  // tick the elapsed-seconds counter while a busy overlay is up
   useEffect(() => {
-    if (!ingesting) return;
+    if (!busyKind) return;
     setElapsed(0);
     const start = Date.now();
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 500);
     return () => clearInterval(t);
-  }, [ingesting]);
+  }, [busyKind]);
+
+  // reset the incremental grid whenever the visible set changes
+  useEffect(() => {
+    setRenderCount(48);
+  }, [deck?.videoId, active, search, sort, showMastered]);
 
   /* ---------- when repo is ready: migrate, load everything ---------- */
   useEffect(() => {
@@ -159,7 +176,7 @@ export default function App() {
   async function handleSubmit(url: string) {
     if (!repo) return;
     setLoading(true);
-    setIngesting(true);
+    setBusyKind('ingest');
     setError(null);
     const myToken = ++token.current;
     try {
@@ -168,7 +185,7 @@ export default function App() {
       if (cards.length === 0) {
         throw new ApiError('В субтитрах не нашлось слов для изучения.');
       }
-      setIngesting(false);
+      setBusyKind(null);
 
       // Reuse saved translations for the same video
       const existing = await repo.loadDeck(t.videoId).catch(() => null);
@@ -212,7 +229,7 @@ export default function App() {
       translateAllWords(newDeck, myToken);
     } catch (e) {
       setLoading(false);
-      setIngesting(false);
+      setBusyKind(null);
       const msg = e instanceof ApiError ? e.message : 'Что-то пошло не так. Попробуйте ещё раз.';
       track('video_add_failed', { code: e instanceof ApiError ? e.code : 'UNKNOWN' });
       setError(msg);
@@ -432,6 +449,7 @@ export default function App() {
     const due = dueWords(words).slice(0, STUDY_SESSION_MAX);
     if (due.length === 0) return;
     setLoading(true);
+    setBusyKind('open');
     try {
       const deckIds = new Set(decks.map((d) => d.videoId));
       const cards: StudyCard[] = [];
@@ -477,6 +495,7 @@ export default function App() {
       setStudyCards(cards);
     } finally {
       setLoading(false);
+      setBusyKind(null);
     }
   }
 
@@ -484,6 +503,8 @@ export default function App() {
     if (!repo) return;
     token.current++;
     setLoading(true);
+    const cached = deckCache.current.has(meta.videoId);
+    if (!cached) setBusyKind('open'); // instant from memory → no overlay flash
     setError(null);
     try {
       const full = deckCache.current.get(meta.videoId) || (await repo.loadDeck(meta.videoId));
@@ -494,12 +515,13 @@ export default function App() {
       setActive(new Set(DEFAULT_FILTER));
       setShowMastered(false);
       setSearch('');
-      setLoading(false);
       track('deck_opened', { video_id: meta.videoId });
       translateAllWords(full, token.current);
     } catch {
-      setLoading(false);
       setError('Не удалось открыть колоду. Попробуйте ещё раз.');
+    } finally {
+      setLoading(false);
+      setBusyKind(null);
     }
   }
 
@@ -609,18 +631,26 @@ export default function App() {
                   : 'Ничего не найдено. Измените фильтры или запрос.'}
               </p>
             ) : (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {visible.map((card) => (
-                  <WordCard
-                    key={card.id}
-                    card={card}
-                    videoId={deck.videoId}
-                    mastered={isMastered(words.get(card.id))}
-                    onReveal={translateExamples}
-                    onKnown={(c) => markKnownWord(c.id, c.translation, deck.videoId)}
+              <>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {visible.slice(0, renderCount).map((card) => (
+                    <WordCard
+                      key={card.id}
+                      card={card}
+                      videoId={deck.videoId}
+                      mastered={isMastered(words.get(card.id))}
+                      onReveal={translateExamples}
+                      onKnown={(c) => markKnownWord(c.id, c.translation, deck.videoId)}
+                    />
+                  ))}
+                </div>
+                {visible.length > renderCount && (
+                  <AutoLoadMore
+                    remaining={visible.length - renderCount}
+                    onMore={() => setRenderCount((c) => c + 96)}
                   />
-                ))}
-              </div>
+                )}
+              </>
             )}
           </div>
         </main>
@@ -633,7 +663,8 @@ export default function App() {
           onOpenVideo={openDeckById}
         />
       ) : (
-        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-10">
+        // pb ~18vh biases flex-centering upward: optical center above geometric
+        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 pb-[18vh] pt-6">
           {words.size > 0 && (
             <div className="mb-5 flex flex-wrap items-center justify-center gap-2 text-sm">
               {streak > 0 && (
@@ -668,7 +699,13 @@ export default function App() {
             Вставьте ссылку на YouTube — выгрузим субтитры и соберём карточки
             со словами, переводом и примерами в контексте.
           </p>
-          <UrlForm onSubmit={handleSubmit} loading={loading || !repo} error={error} />
+          <UrlForm
+            onSubmit={handleSubmit}
+            loading={loading}
+            disabled={!repo}
+            error={error}
+            onWarmup={warmIngest}
+          />
           <DeckList decks={decks} words={words} onOpen={openDeck} onDelete={removeDeck} />
         </main>
       )}
@@ -683,7 +720,7 @@ export default function App() {
         />
       )}
 
-      {ingesting && <IngestOverlay elapsed={elapsed} />}
+      {busyKind && <IngestOverlay elapsed={elapsed} mode={busyKind} />}
 
       {showLogin && (
         <LoginModal onClose={() => setShowLogin(false)} onGoogleLinked={afterLogin} />
@@ -696,6 +733,33 @@ function mergeSources(prev: string[] | undefined, videoId?: string): string[] {
   const set = new Set(prev || []);
   if (videoId) set.add(videoId);
   return [...set];
+}
+
+/** Sentinel at the grid's end: auto-loads more cards as the user scrolls near. */
+function AutoLoadMore({ remaining, onMore }: { remaining: number; onMore: () => void }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) onMore();
+      },
+      { rootMargin: '800px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [onMore]);
+
+  return (
+    <button
+      ref={ref}
+      onClick={onMore}
+      className="mx-auto mt-6 block border border-ink-900 bg-white px-4 py-2 text-sm font-bold text-ink-900 transition hover:bg-ink-100"
+    >
+      показать ещё ({remaining})
+    </button>
+  );
 }
 
 interface HeaderProps {

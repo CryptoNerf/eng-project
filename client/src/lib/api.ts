@@ -13,11 +13,18 @@ export class ApiError extends Error {
 }
 
 // Cold ingest (yt-dlp + PoToken) can take ~30s; give it generous headroom.
-const ingestCall = httpsCallable<{ url: string }, Transcript & { cached?: boolean }>(
-  fns,
-  'ingest',
-  { timeout: 150_000 },
-);
+const ingestCall = httpsCallable<
+  { url: string; warmup?: boolean },
+  Transcript & { cached?: boolean }
+>(fns, 'ingest', { timeout: 150_000 });
+
+/**
+ * Fire-and-forget ping that boots a function instance while the user is
+ * still typing/pasting the URL — the real request then skips the cold start.
+ */
+export function warmupIngest(): void {
+  ingestCall({ url: '', warmup: true }).catch(() => {});
+}
 
 const FRIENDLY: Record<string, string> = {
   'functions/unauthenticated': 'Идёт вход… Подождите пару секунд и попробуйте снова.',

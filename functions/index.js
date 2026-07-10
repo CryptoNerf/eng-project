@@ -58,6 +58,11 @@ export const ingest = onCall(
     secrets: [YT_COOKIES],
   },
   async (request) => {
+    // Warmup ping: boots the instance while the user is still typing the URL,
+    // so the real request skips the cold start. Does no work.
+    if (request.data?.warmup) {
+      return { ok: true, warm: true };
+    }
     if (!request.auth) {
       throw new HttpsError('unauthenticated', 'Требуется вход в приложение.');
     }

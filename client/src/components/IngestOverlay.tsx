@@ -1,5 +1,6 @@
 interface Props {
-  elapsed: number; // seconds since ingest started
+  elapsed: number; // seconds since the operation started
+  mode: 'ingest' | 'open';
 }
 
 function fmt(sec: number): string {
@@ -9,30 +10,48 @@ function fmt(sec: number): string {
 }
 
 /**
- * Blocking overlay shown during the opaque "fetch subtitles" phase. We can't
- * stream real progress from the Cloud Function, so we reassure with an elapsed
- * timer and staged messages — and a note that a first-time video is slower.
+ * Blocking overlay for long operations. We can't stream real progress from
+ * the Cloud Function, so the bar follows a saturating curve tuned to typical
+ * durations — honest enough to show movement, capped at 95% until done.
  */
-export function IngestOverlay({ elapsed }: Props) {
-  const stage =
-    elapsed < 8
+export function IngestOverlay({ elapsed, mode }: Props) {
+  const isIngest = mode === 'ingest';
+  // typical: ingest ~25-60s (cold + yt-dlp), open ~2-8s (network + render)
+  const tau = isIngest ? 22 : 3.5;
+  const pct = Math.min(95, Math.round(100 * (1 - Math.exp(-Math.max(elapsed, 0.5) / tau))));
+
+  const title = isIngest ? 'Собираем карточки' : 'Открываем колоду';
+  const stage = isIngest
+    ? elapsed < 8
       ? 'Извлекаем субтитры с YouTube…'
-      : elapsed < 22
+      : elapsed < 25
         ? 'Разбираем текст и собираем карточки…'
-        : 'Новое видео — первая загрузка может занять до минуты…';
+        : 'Новое видео — первая загрузка может занять до минуты…'
+    : 'Загружаем слова из вашей библиотеки…';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/80 px-6">
       <div className="w-full max-w-sm border-2 border-ink-900 bg-white p-6 text-center animate-fade-up">
-        <div className="mx-auto mb-4 h-8 w-8 rounded-full border-2 border-ink-200 border-t-ink-900 animate-spin-slow" />
-        <p className="text-base font-bold text-ink-900">Собираем карточки</p>
+        <p className="text-base font-bold text-ink-900">{title}</p>
         <p className="mt-2 min-h-[2.5rem] text-sm text-ink-500">{stage}</p>
-        <p className="mt-3 inline-block border border-ink-900 bg-[#f7dd4b] px-3 py-1 text-sm font-bold text-ink-900">
-          {fmt(elapsed)}
-        </p>
-        {elapsed >= 45 && (
+
+        <div className="mt-2 h-3 w-full border border-ink-900 bg-white">
+          <div
+            className="h-full bg-[#f7dd4b] transition-all duration-500"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+
+        <div className="mt-3 flex items-center justify-center gap-3 text-sm">
+          <span className="border border-ink-900 bg-[#f7dd4b] px-3 py-1 font-bold text-ink-900">
+            {fmt(elapsed)}
+          </span>
+          {isIngest && <span className="text-xs text-ink-400">обычно 20–60 секунд</span>}
+        </div>
+
+        {isIngest && elapsed >= 70 && (
           <p className="mt-3 text-xs text-ink-400">
-            Дольше обычного — ещё немного, или закройте и попробуйте позже.
+            Дольше обычного — YouTube не торопится. Ещё немного…
           </p>
         )}
       </div>

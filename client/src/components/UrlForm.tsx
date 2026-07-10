@@ -4,8 +4,13 @@ import { ArrowRightIcon, LinkIcon } from './Icons';
 interface Props {
   onSubmit: (url: string) => void;
   loading: boolean;
+  /** Backend not ready yet (auth initializing) — button waits without the
+   *  confusing «обработка…» label. */
+  disabled?: boolean;
   error: string | null;
   compact?: boolean;
+  /** Called on first focus/paste — pre-warms the ingest function. */
+  onWarmup?: () => void;
 }
 
 const SAMPLES = [
@@ -13,13 +18,13 @@ const SAMPLES = [
   { label: '3Blue1Brown', url: 'https://youtu.be/aircAruvnKk' },
 ];
 
-export function UrlForm({ onSubmit, loading, error, compact }: Props) {
+export function UrlForm({ onSubmit, loading, disabled, error, compact, onWarmup }: Props) {
   const [value, setValue] = useState('');
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const v = value.trim();
-    if (v && !loading) onSubmit(v);
+    if (v && !loading && !disabled) onSubmit(v);
   };
 
   return (
@@ -33,6 +38,8 @@ export function UrlForm({ onSubmit, loading, error, compact }: Props) {
             type="text"
             value={value}
             onChange={(e) => setValue(e.target.value)}
+            onFocus={onWarmup}
+            onPaste={onWarmup}
             placeholder="Ссылка на YouTube-видео…"
             disabled={loading}
             className="h-full w-full border border-ink-900 bg-white py-3.5 pl-11 pr-3 text-sm text-ink-900 outline-none transition placeholder:text-ink-400 focus:outline-2 focus:outline-solid focus:-outline-offset-2 focus:outline-ink-900 disabled:opacity-60"
@@ -40,7 +47,7 @@ export function UrlForm({ onSubmit, loading, error, compact }: Props) {
         </div>
         <button
           type="submit"
-          disabled={loading || !value.trim()}
+          disabled={loading || disabled || !value.trim()}
           className="inline-flex shrink-0 items-center gap-2 border-2 border-ink-900 bg-ink-900 px-4 py-3.5 text-sm font-bold text-white transition hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? (
@@ -66,7 +73,7 @@ export function UrlForm({ onSubmit, loading, error, compact }: Props) {
           {SAMPLES.map((s) => (
             <button
               key={s.url}
-              onClick={() => !loading && onSubmit(s.url)}
+              onClick={() => !loading && !disabled && onSubmit(s.url)}
               className="inline-flex items-center gap-1 border border-ink-900 bg-white px-3 py-1 font-medium text-ink-900 transition hover:bg-ink-100"
             >
               {s.label}
