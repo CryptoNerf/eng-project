@@ -21,16 +21,18 @@ export type Difficulty = 'easy' | 'medium' | 'hard';
 export interface Example {
   en: string;
   ru?: string;
-  time: number; // seconds into the video
+  time: number; // phrase start, seconds into the video
+  end?: number; // phrase end (for the in-card clip player)
 }
 
 export interface Card {
-  id: string; // normalized word (key)
-  word: string; // display form
+  id: string; // lemma (key)
+  word: string; // display form = lemma
+  forms?: string[]; // surface forms seen in the video (run, running, ran…)
   translation: string; // RU ('' until fetched)
   examples: Example[];
-  count: number; // occurrences in this video
-  rank: number; // frequency rank (Infinity if not in common list)
+  count: number; // occurrences in this video (all forms)
+  rank: number; // frequency rank (UNRANKED if not in common list)
   difficulty: Difficulty;
 }
 
@@ -79,6 +81,7 @@ export interface Deck {
   thumbnail: string;
   duration: number;
   createdAt: number;
+  builderVersion?: number; // CARDS_VERSION the cards were built with
   cards: Card[];
   srs: Record<string, SrsState>;
 }
@@ -93,4 +96,5 @@ export interface DeckMeta {
   createdAt: number;
   cardCount: number;
   wordIds?: string[]; // for «вы знаете X%» without loading full cards
+  builderVersion?: number; // decks below CARDS_VERSION are rebuilt on open
 }

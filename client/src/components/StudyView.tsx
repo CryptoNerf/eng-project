@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { StudyCard } from '../lib/types';
+import type { Example, StudyCard } from '../lib/types';
 import { CheckIcon as KnownIcon } from './Icons';
 import { track } from '../lib/analytics';
 import { GRADES, type GradeKey } from '../lib/srs';
-import { formatTime, youtubeUrlAt } from '../lib/words';
+import { formatTime } from '../lib/words';
 import { speak } from '../lib/tts';
-import { CheckIcon, ClockIcon, SoundIcon, XIcon } from './Icons';
+import { CheckIcon, PlayIcon, SoundIcon, XIcon } from './Icons';
 
 interface Props {
   cards: StudyCard[];
   onGrade: (card: StudyCard, grade: number) => void;
   onKnown: (card: StudyCard) => void;
+  onPlayClip: (card: StudyCard, ex: Example) => void;
   onClose: () => void;
 }
 
@@ -21,7 +22,7 @@ const BUTTONS: { key: GradeKey; label: string; hint: string; cls: string }[] = [
   { key: 'easy', label: 'Легко', hint: '4', cls: 'bg-ink-900 text-white' },
 ];
 
-export function StudyView({ cards, onGrade, onKnown, onClose }: Props) {
+export function StudyView({ cards, onGrade, onKnown, onPlayClip, onClose }: Props) {
   const [queue, setQueue] = useState<StudyCard[]>(cards);
   const [revealed, setRevealed] = useState(false);
   const [done, setDone] = useState(0);
@@ -168,15 +169,17 @@ export function StudyView({ cards, onGrade, onKnown, onClose }: Props) {
                         <p className="leading-relaxed text-ink-800">{ex.en}</p>
                         {ex.ru && <p className="mt-1 text-sm text-ink-400">{ex.ru}</p>}
                         <div className="mt-2 flex items-center gap-3">
-                          <a
-                            href={youtubeUrlAt(current.videoId, ex.time)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-xs font-medium text-ink-400 hover:text-ink-900"
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onPlayClip(current, ex);
+                            }}
+                            className="inline-flex items-center gap-1 border border-ink-900 px-2 py-0.5 text-xs font-bold text-ink-900 transition hover:bg-[#f7dd4b]"
+                            title="Послушать фразу из видео"
                           >
-                            <ClockIcon className="h-3.5 w-3.5" />
+                            <PlayIcon className="h-3 w-3" />
                             {formatTime(ex.time)}
-                          </a>
+                          </button>
                           <button
                             onClick={() => speak(ex.en)}
                             className="inline-flex items-center gap-1 text-xs font-medium text-ink-400 hover:text-ink-900"

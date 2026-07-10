@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import { fetchTranscript, translateBatch, warmupIngest, ApiError } from './lib/api';
-import { buildCards, UNRANKED } from './lib/words';
+import { buildCards, exampleEnd, CARDS_VERSION, UNRANKED } from './lib/words';
 import { initialSrs, isDue, isLearnedSrs, review } from './lib/srs';
 import { auth } from './lib/firebase';
 import { watchUser, completeEmailLink, pendingEmailLink } from './lib/auth';
@@ -44,6 +44,7 @@ import { Dictionary } from './components/Dictionary';
 import { Logo } from './components/Logo';
 import { IngestOverlay } from './components/IngestOverlay';
 import { LoginModal } from './components/LoginModal';
+import { ClipPlayer, type Clip } from './components/ClipPlayer';
 import { BrainIcon } from './components/Icons';
 
 const DEFAULT_FILTER: Difficulty[] = ['medium', 'hard'];
@@ -73,6 +74,7 @@ export default function App() {
   const [sort, setSort] = useState<SortKey>('frequency');
   const [studyCards, setStudyCards] = useState<StudyCard[] | null>(null);
   const [showLogin, setShowLogin] = useState(false);
+  const [clip, setClip] = useState<Clip | null>(null);
   // Mounting 300+ flip-cards at once janks phones for seconds — render the
   // grid incrementally instead.
   const [renderCount, setRenderCount] = useState(48);
@@ -89,6 +91,20 @@ export default function App() {
     if (warmed.current) return;
     warmed.current = true;
     warmupIngest();
+  }
+
+  /** Open the in-app phrase player for an example of a card. */
+  function playClip(videoId: string, card: Card, ex: Card['examples'][number]) {
+    setClip({
+      videoId,
+      start: ex.time,
+      end: exampleEnd(ex),
+      en: ex.en,
+      ru: ex.ru,
+      word: card.word,
+      forms: card.forms?.length ? card.forms : [card.word],
+    });
+    track('clip_played', { video_id: videoId });
   }
 
   /* ---------- auth → repo ---------- */
@@ -187,17 +203,21 @@ export default function App() {
       }
       setBusyKind(null);
 
-      // Reuse saved translations for the same video
+      // Reuse saved translations for the same video (match examples by text —
+      // rebuilt cards may order/segment examples differently)
       const existing = await repo.loadDeck(t.videoId).catch(() => null);
       if (existing) {
         const prevByWord = new Map(existing.cards.map((c) => [c.id, c]));
+        const ruByEn = new Map<string, string>();
+        for (const c of existing.cards) {
+          for (const ex of c.examples) if (ex.ru) ruByEn.set(ex.en, ex.ru);
+        }
         for (const c of cards) {
           const prev = prevByWord.get(c.id);
-          if (prev) {
-            c.translation = prev.translation;
-            c.examples.forEach((ex, i) => {
-              if (prev.examples[i]?.ru) ex.ru = prev.examples[i].ru;
-            });
+          if (prev) c.translation = prev.translation;
+          for (const ex of c.examples) {
+            const ru = ruByEn.get(ex.en);
+            if (ru) ex.ru = ru;
           }
         }
       }
@@ -209,6 +229,7 @@ export default function App() {
         thumbnail: t.thumbnail,
         duration: t.duration,
         createdAt: existing?.createdAt ?? Date.now(),
+        builderVersion: CARDS_VERSION,
         cards,
         srs: {},
       };
@@ -501,6 +522,11 @@ export default function App() {
 
   async function openDeck(meta: DeckMeta) {
     if (!repo) return;
+    // decks built by an older pipeline get rebuilt from the cached transcript
+    // (fast: the transcript is in the global cache) — lemmatization etc. apply
+    if ((meta.builderVersion ?? 1) < CARDS_VERSION) {
+      return handleSubmit(meta.videoId);
+    }
     token.current++;
     setLoading(true);
     const cached = deckCache.current.has(meta.videoId);
@@ -572,9 +598,9 @@ export default function App() {
   /* ---------- render ---------- */
   return (
     <>
-    {/* invisible while studying: 3D-flipped cards (preserve-3d) would otherwise
-        paint through the study overlay; visibility keeps scroll and state */}
-    <div className={`flex min-h-screen flex-col ${studyCards ? 'invisible' : ''}`}>
+    {/* invisible while studying or playing a clip: 3D-flipped cards
+        (preserve-3d) would otherwise paint through fixed overlays */}
+    <div className={`flex min-h-screen flex-col ${studyCards || clip ? 'invisible' : ''}`}>
       <Header
         user={user}
         repo={repo}
@@ -641,6 +667,7 @@ export default function App() {
                       mastered={isMastered(words.get(card.id))}
                       onReveal={translateExamples}
                       onKnown={(c) => markKnownWord(c.id, c.translation, deck.videoId)}
+                      onPlayClip={(c, ex) => playClip(deck.videoId, c, ex)}
                     />
                   ))}
                 </div>
@@ -716,9 +743,12 @@ export default function App() {
           cards={studyCards}
           onGrade={applyGrade}
           onKnown={(c) => markKnownWord(c.id, c.translation, c.videoId)}
+          onPlayClip={(c, ex) => playClip(c.videoId, c, ex)}
           onClose={() => setStudyCards(null)}
         />
       )}
+
+      {clip && <ClipPlayer clip={clip} onClose={() => setClip(null)} />}
 
       {busyKind && <IngestOverlay elapsed={elapsed} mode={busyKind} />}
 

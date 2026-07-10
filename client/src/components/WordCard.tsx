@@ -1,9 +1,9 @@
 import { useState, type CSSProperties } from 'react';
-import type { Card } from '../lib/types';
-import { formatTime, youtubeUrlAt } from '../lib/words';
+import type { Card, Example } from '../lib/types';
+import { formatTime } from '../lib/words';
 import { paperFor, tiltFor, DIFF_LABEL } from '../lib/palette';
 import { speak } from '../lib/tts';
-import { CheckIcon, ClockIcon, SoundIcon } from './Icons';
+import { CheckIcon, PlayIcon, SoundIcon } from './Icons';
 
 interface Props {
   card: Card;
@@ -11,13 +11,14 @@ interface Props {
   mastered?: boolean; // выучено или отмечено «уже знаю»
   onReveal?: (card: Card) => void;
   onKnown?: (card: Card) => void;
+  onPlayClip?: (card: Card, ex: Example) => void;
 }
 
-/** Wrap occurrences of the word (and its inflections) in a sentence. */
-function Highlighted({ sentence, word }: { sentence: string; word: string }) {
-  const esc = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const splitter = new RegExp(`(\\b${esc}\\w*)`, 'gi');
-  const matcher = new RegExp(`^${esc}\\w*$`, 'i');
+/** Wrap occurrences of the word (all its surface forms) in a sentence. */
+function Highlighted({ sentence, forms }: { sentence: string; forms: string[] }) {
+  const esc = forms.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const splitter = new RegExp(`(\\b(?:${esc})\\w*)`, 'gi');
+  const matcher = new RegExp(`^(?:${esc})\\w*$`, 'i');
   const parts = sentence.split(splitter);
   return (
     <>
@@ -34,9 +35,10 @@ function Highlighted({ sentence, word }: { sentence: string; word: string }) {
   );
 }
 
-export function WordCard({ card, videoId, mastered, onReveal, onKnown }: Props) {
+export function WordCard({ card, mastered, onReveal, onKnown, onPlayClip }: Props) {
   const [flipped, setFlipped] = useState(false);
   const paper = paperFor(card.word, card.difficulty);
+  const forms = card.forms?.length ? card.forms : [card.word];
 
   const toggle = () => {
     setFlipped((f) => {
@@ -137,20 +139,23 @@ export function WordCard({ card, videoId, mastered, onReveal, onKnown }: Props) 
             {card.examples.slice(0, 3).map((ex, i) => (
               <div key={i} className="border-t border-dotted border-ink-300 pt-1.5 text-[13px] leading-snug text-ink-800">
                 <p>
-                  <Highlighted sentence={ex.en} word={card.word} />
+                  <Highlighted sentence={ex.en} forms={forms} />
                 </p>
                 {ex.ru && <p className="mt-0.5 text-xs text-ink-400">{ex.ru}</p>}
                 <div className="mt-1 flex items-center gap-3">
-                  <a
-                    href={youtubeUrlAt(videoId, ex.time)}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="inline-flex items-center gap-1 text-[11px] font-medium text-ink-400 underline decoration-dotted transition hover:text-ink-900"
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPlayClip?.(card, ex);
+                    }}
+                    className="inline-flex items-center gap-1 border border-ink-900 px-1.5 py-0.5 text-[11px] font-bold text-ink-900 transition hover:bg-[#f7dd4b]"
+                    title="Послушать фразу из видео"
                   >
-                    <ClockIcon className="h-3.5 w-3.5" />
+                    <PlayIcon className="h-3 w-3" />
                     {formatTime(ex.time)}
-                  </a>
+                  </span>
                   <span
                     role="button"
                     tabIndex={0}

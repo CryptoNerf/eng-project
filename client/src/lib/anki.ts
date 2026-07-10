@@ -11,7 +11,7 @@ export function toAnkiTsv(cards: Card[]): string {
     const ex = c.examples[0];
     const front = c.word;
     const exHtml = ex
-      ? `<br><br><span style="color:#64748b">${highlight(ex.en, c.word)}</span>` +
+      ? `<br><br><span style="color:#64748b">${highlight(ex.en, c.forms?.length ? c.forms : [c.word])}</span>` +
         (ex.ru ? `<br><span style="color:#94a3b8">${ex.ru}</span>` : '')
       : '';
     const back = `${c.translation}${exHtml}`;
@@ -37,8 +37,9 @@ function clean(s: string): string {
   return s.replace(/[\t\r\n]+/g, ' ').trim();
 }
 
-function highlight(sentence: string, word: string): string {
-  const re = new RegExp(`\\b(${escapeRegExp(word)}\\w*)`, 'gi');
+function highlight(sentence: string, forms: string[]): string {
+  const esc = forms.map(escapeRegExp).join('|');
+  const re = new RegExp(`\\b((?:${esc})\\w*)`, 'gi');
   return sentence.replace(re, '<b>$1</b>');
 }
 

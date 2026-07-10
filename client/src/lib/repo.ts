@@ -50,6 +50,7 @@ function toMeta(d: Deck): DeckMeta {
     createdAt: d.createdAt,
     cardCount: d.cards.length,
     wordIds: d.cards.map((c) => c.id),
+    builderVersion: d.builderVersion ?? 1,
   };
 }
 
