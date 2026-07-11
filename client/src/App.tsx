@@ -709,8 +709,9 @@ export default function App() {
           onOpenVideo={openDeckById}
         />
       ) : (
-        // pb ~18vh biases flex-centering upward: optical center above geometric
-        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 pb-[18vh] pt-6">
+        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pt-6">
+        {/* pb ~18vh biases flex-centering upward: optical center above geometric */}
+        <div className="flex flex-1 flex-col justify-center pb-[18vh]">
           {words.size > 0 && (
             <div className="mb-5 flex flex-wrap items-center justify-center gap-2 text-sm">
               {streak > 0 && (
@@ -759,6 +760,18 @@ export default function App() {
             onOpen={openDeck}
             onDelete={removeDeck}
           />
+        </div>
+        <footer className="shrink-0 py-4 text-center text-xs text-ink-400">
+          Copyright 2026{' '}
+          <a
+            href="https://cryptonerf.github.io/portfolio/"
+            target="_blank"
+            rel="noreferrer"
+            className="underline decoration-dotted transition hover:text-ink-900"
+          >
+            Émile Alexanyan
+          </a>
+        </footer>
         </main>
       )}
     </div>
