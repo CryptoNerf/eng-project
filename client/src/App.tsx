@@ -54,6 +54,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [repo, setRepo] = useState<Repo | null>(null);
   const [decks, setDecks] = useState<DeckMeta[]>([]);
+  const [decksLoading, setDecksLoading] = useState(true);
   const [deck, setDeck] = useState<Deck | null>(null);
   const [showDict, setShowDict] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -136,14 +137,19 @@ export default function App() {
     if (!repo) return;
     let cancelled = false;
     (async () => {
-      // Complete an email-link sign-in if we returned via one (before loading data)
+      // Complete an email-link sign-in if we returned via one. NB: linking to
+      // the SAME uid fires no onAuthStateChanged event, so we must keep going
+      // and load data below — early-returning here left the app empty.
       if (!emailLinkHandled.current && pendingEmailLink()) {
         emailLinkHandled.current = true;
         try {
           await completeEmailLink(() =>
             window.prompt('Введите e-mail, на который пришла ссылка для входа:'),
           );
-          return; // auth state will change → repo re-inits → effect reruns cleanly
+          const u = auth.currentUser;
+          if (u && !cancelled) setUser({ ...u } as User);
+          // if the link signed into a DIFFERENT account, onAuthStateChanged
+          // re-creates the repo and this effect reruns with the right uid
         } catch (e) {
           console.warn('Не удалось завершить вход по ссылке:', e);
         }
@@ -153,28 +159,41 @@ export default function App() {
       } catch (e) {
         console.warn('Миграция локальных колод не удалась:', e);
       }
-      try {
-        let ws = await repo.listWords();
-        if (ws.length === 0 && user) {
-          const migrated = await migrateProgressToWords(repo, user.uid).catch(() => 0);
-          if (migrated > 0) ws = await repo.listWords();
-        }
-        if (!cancelled) setWords(new Map(ws.map((w) => [w.word, w])));
-      } catch (e) {
-        console.warn('Не удалось загрузить словарь:', e);
-      }
-      try {
-        const s = await repo.loadStats();
-        if (!cancelled) setStats(s);
-      } catch {
-        /* keep empty stats */
-      }
-      try {
-        const list = await repo.listDecks();
-        if (!cancelled) setDecks(list);
-      } catch (e) {
-        console.warn('Не удалось загрузить колоды:', e);
-      }
+      // Load independent data in parallel — collections must not wait for the
+      // (potentially large) words collection.
+      setDecksLoading(true);
+      await Promise.all([
+        (async () => {
+          try {
+            const list = await repo.listDecks();
+            if (!cancelled) setDecks(list);
+          } catch (e) {
+            console.warn('Не удалось загрузить колоды:', e);
+          } finally {
+            if (!cancelled) setDecksLoading(false);
+          }
+        })(),
+        (async () => {
+          try {
+            let ws = await repo.listWords();
+            if (ws.length === 0 && user) {
+              const migrated = await migrateProgressToWords(repo, user.uid).catch(() => 0);
+              if (migrated > 0) ws = await repo.listWords();
+            }
+            if (!cancelled) setWords(new Map(ws.map((w) => [w.word, w])));
+          } catch (e) {
+            console.warn('Не удалось загрузить словарь:', e);
+          }
+        })(),
+        (async () => {
+          try {
+            const s = await repo.loadStats();
+            if (!cancelled) setStats(s);
+          } catch {
+            /* keep empty stats */
+          }
+        })(),
+      ]);
       if (!deepLinkHandled.current) {
         deepLinkHandled.current = true;
         const params = new URLSearchParams(window.location.search);
@@ -733,7 +752,13 @@ export default function App() {
             error={error}
             onWarmup={warmIngest}
           />
-          <DeckList decks={decks} words={words} onOpen={openDeck} onDelete={removeDeck} />
+          <DeckList
+            decks={decks}
+            words={words}
+            loading={decksLoading}
+            onOpen={openDeck}
+            onDelete={removeDeck}
+          />
         </main>
       )}
     </div>
@@ -744,6 +769,7 @@ export default function App() {
           onGrade={applyGrade}
           onKnown={(c) => markKnownWord(c.id, c.translation, c.videoId)}
           onPlayClip={(c, ex) => playClip(c.videoId, c, ex)}
+          paused={!!clip}
           onClose={() => setStudyCards(null)}
         />
       )}

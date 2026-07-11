@@ -78,6 +78,10 @@ export function LoginModal({ onClose, onGoogleLinked }: Props) {
           <div className="border border-dashed border-ink-900 bg-[#cfe36e]/40 p-4 text-sm text-ink-800">
             Отправили ссылку на <b>{email}</b>. Откройте письмо на этом устройстве и
             перейдите по ссылке — вы вернётесь сюда уже с синхронизацией.
+            <p className="mt-2 text-xs text-ink-500">
+              Письма нет? Загляните в папку <b>«Спам»</b> — письма от Firebase часто
+              попадают туда. Отметьте «не спам», чтобы следующие пришли во «Входящие».
+            </p>
           </div>
         ) : (
           <>

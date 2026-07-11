@@ -24,7 +24,10 @@ export const fns = getFunctions(app, 'europe-west1');
 
 // Persistent cache = offline-first: decks and progress are readable and
 // writable without network; changes sync when the connection returns.
+// Auto-detect long polling: some mobile networks/proxies silently break
+// Firestore's default streaming transport (symptom: requests hang forever).
 export const db = initializeFirestore(app, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
   ignoreUndefinedProperties: true,
+  experimentalAutoDetectLongPolling: true,
 });

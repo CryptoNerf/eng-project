@@ -141,6 +141,15 @@ export function ClipPlayer({ clip, onClose }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clip.videoId, clip.start]);
 
+  // Escape closes the clip (StudyView's own keyboard is paused while open)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   function replay() {
     const p = playerRef.current;
     if (!p) return;

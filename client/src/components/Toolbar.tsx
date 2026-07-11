@@ -35,46 +35,46 @@ export function Toolbar(p: Props) {
   return (
     <div className="sticky top-0 z-20 -mx-4 mb-6 border-b border-ink-900 bg-[#f4f2ea] px-4 py-3">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2.5">
-        {/* Difficulty filter */}
-        <div className="flex items-center gap-1.5">
+        {/* Difficulty filter — wraps and shrinks on narrow screens */}
+        <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
           {DIFFS.map((d) => {
             const on = p.active.has(d.key);
             return (
               <button
                 key={d.key}
                 onClick={() => p.onToggle(d.key)}
-                className={`inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-sm font-medium transition ${
+                className={`inline-flex items-center gap-1 border px-1.5 py-1 text-xs font-medium transition sm:gap-1.5 sm:px-2.5 sm:py-1.5 sm:text-sm ${
                   on
                     ? 'border-ink-900 bg-ink-900 text-white'
                     : 'border-ink-300 bg-white text-ink-400 hover:border-ink-900 hover:text-ink-900'
                 }`}
               >
                 <span
-                  className="h-2.5 w-2.5 border border-black/20"
+                  className="h-2 w-2 border border-black/20 sm:h-2.5 sm:w-2.5"
                   style={{ backgroundColor: on ? DIFF_SWATCH[d.key] : '#d9d6cb' }}
                 />
                 {d.label}
-                <span className="text-xs opacity-60">{p.counts[d.key]}</span>
+                <span className="text-[10px] opacity-60 sm:text-xs">{p.counts[d.key]}</span>
               </button>
             );
           })}
-        </div>
 
-        {/* Mastered toggle */}
-        {p.masteredCount > 0 && (
-          <button
-            onClick={p.onToggleMastered}
-            className={`inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-sm font-medium transition ${
-              p.showMastered
-                ? 'border-ink-900 bg-[#cfe36e] text-ink-900'
-                : 'border-ink-300 bg-white text-ink-400 hover:border-ink-900 hover:text-ink-900'
-            }`}
-            title="Показать слова, которые вы уже знаете"
-          >
-            ✓ выученные
-            <span className="text-xs opacity-60">{p.masteredCount}</span>
-          </button>
-        )}
+          {/* Mastered toggle */}
+          {p.masteredCount > 0 && (
+            <button
+              onClick={p.onToggleMastered}
+              className={`inline-flex items-center gap-1 border px-1.5 py-1 text-xs font-medium transition sm:gap-1.5 sm:px-2.5 sm:py-1.5 sm:text-sm ${
+                p.showMastered
+                  ? 'border-ink-900 bg-[#cfe36e] text-ink-900'
+                  : 'border-ink-300 bg-white text-ink-400 hover:border-ink-900 hover:text-ink-900'
+              }`}
+              title="Показать слова, которые вы уже знаете"
+            >
+              ✓ выученные
+              <span className="text-[10px] opacity-60 sm:text-xs">{p.masteredCount}</span>
+            </button>
+          )}
+        </div>
 
         {/* Search */}
         <div className="relative min-w-[160px] flex-1">

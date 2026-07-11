@@ -7,11 +7,26 @@ import { BookIcon, TrashIcon } from './Icons';
 interface Props {
   decks: DeckMeta[];
   words: WordsMap;
+  loading?: boolean;
   onOpen: (deck: DeckMeta) => void;
   onDelete: (videoId: string) => void;
 }
 
-export function DeckList({ decks, words, onOpen, onDelete }: Props) {
+export function DeckList({ decks, words, loading, onOpen, onDelete }: Props) {
+  if (decks.length === 0 && loading) {
+    return (
+      <div className="mx-auto mt-14 w-full max-w-3xl">
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-ink-500">
+          <BookIcon className="h-4 w-4" />
+          ваши коллекции
+        </h3>
+        <div className="flex items-center gap-2 border border-dashed border-ink-300 bg-white px-4 py-6 text-sm text-ink-400">
+          <span className="h-3.5 w-3.5 rounded-full border-2 border-ink-200 border-t-ink-500 animate-spin-slow" />
+          загружаем…
+        </div>
+      </div>
+    );
+  }
   if (decks.length === 0) return null;
   return (
     <div className="mx-auto mt-14 w-full max-w-3xl">

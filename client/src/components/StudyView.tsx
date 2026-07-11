@@ -12,6 +12,8 @@ interface Props {
   onGrade: (card: StudyCard, grade: number) => void;
   onKnown: (card: StudyCard) => void;
   onPlayClip: (card: StudyCard, ex: Example) => void;
+  /** true while a modal (clip player) is open above — keyboard is ignored */
+  paused?: boolean;
   onClose: () => void;
 }
 
@@ -22,7 +24,7 @@ const BUTTONS: { key: GradeKey; label: string; hint: string; cls: string }[] = [
   { key: 'easy', label: 'Легко', hint: '4', cls: 'bg-ink-900 text-white' },
 ];
 
-export function StudyView({ cards, onGrade, onKnown, onPlayClip, onClose }: Props) {
+export function StudyView({ cards, onGrade, onKnown, onPlayClip, paused, onClose }: Props) {
   const [queue, setQueue] = useState<StudyCard[]>(cards);
   const [revealed, setRevealed] = useState(false);
   const [done, setDone] = useState(0);
@@ -68,6 +70,7 @@ export function StudyView({ cards, onGrade, onKnown, onPlayClip, onClose }: Prop
   // Keyboard: space/enter to flip, 1-4 to grade
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (paused) return; // clip player is open above
       if (e.key === 'Escape') return onClose();
       if (!current) return;
       if (!revealed && (e.key === ' ' || e.key === 'Enter')) {
@@ -79,7 +82,7 @@ export function StudyView({ cards, onGrade, onKnown, onPlayClip, onClose }: Prop
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [current, revealed, grade, onClose]);
+  }, [current, revealed, grade, onClose, paused]);
 
   const ex = current?.examples[0];
 
