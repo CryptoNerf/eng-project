@@ -171,8 +171,13 @@ export function WatchView({
         </button>
       </div>
 
+      {/* Body: stacked on phones, side-by-side on wide screens.
+          A full-width 16:9 player would be ~810px tall on a laptop and push
+          the subtitles off screen, so its height is capped by the viewport. */}
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+      <div className="flex shrink-0 flex-col lg:h-full lg:w-[58%] lg:justify-center lg:border-r lg:border-ink-900">
       {/* player */}
-      <div className="relative aspect-video w-full shrink-0 bg-ink-900">
+      <div className="relative w-full shrink-0 bg-ink-900 h-[min(38vh,56.25vw)] lg:h-[min(60vh,32.6vw)]">
         <div ref={holderRef} className="absolute inset-0 h-full w-full" />
         {!ready && (
           <div className="absolute inset-0 flex items-center justify-center">
@@ -182,7 +187,7 @@ export function WatchView({
       </div>
 
       {/* controls */}
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-ink-900 px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-ink-900 px-3 py-2 lg:border-b-0">
         <button
           onClick={repeatLine}
           className="border border-ink-900 bg-white px-2 py-1 text-xs font-bold text-ink-900 transition hover:bg-[#f7dd4b]"
@@ -215,8 +220,9 @@ export function WatchView({
           знакомых слов: {studiedTotal}
         </span>
       </div>
+      </div>
 
-      {/* subtitles */}
+      {/* subtitles — own scroll area (right column on wide screens) */}
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {segments.map((seg, i) => (
           <p
@@ -257,6 +263,7 @@ export function WatchView({
           </p>
         ))}
         <div className="h-24" />
+      </div>
       </div>
 
       {/* word popover */}
