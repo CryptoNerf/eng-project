@@ -1,15 +1,16 @@
 import type { Deck } from '../lib/types';
 import { formatTime } from '../lib/words';
-import { LinkIcon, PlusIcon } from './Icons';
+import { LinkIcon, PlayIcon, PlusIcon } from './Icons';
 
 interface Props {
   deck: Deck;
   cardCount: number;
   pct: number | null; // «вы знаете X%» этого видео
   onNew: () => void;
+  onWatch: () => void;
 }
 
-export function VideoHeader({ deck, cardCount, pct, onNew }: Props) {
+export function VideoHeader({ deck, cardCount, pct, onNew, onWatch }: Props) {
   return (
     <div className="mx-auto mb-6 max-w-6xl">
       <div className="flex flex-col gap-4 border border-ink-900 bg-white p-4 sm:flex-row sm:items-center">
@@ -46,6 +47,14 @@ export function VideoHeader({ deck, cardCount, pct, onNew }: Props) {
             </div>
           )}
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              onClick={onWatch}
+              className="inline-flex items-center gap-1.5 border-2 border-ink-900 bg-[#cfe36e] px-3 py-1 text-sm font-bold text-ink-900 transition hover:opacity-90"
+              title="Смотреть видео с интерактивными субтитрами"
+            >
+              <PlayIcon className="h-3.5 w-3.5" />
+              смотреть с субтитрами
+            </button>
             <span className="bg-ink-900 px-2.5 py-1 text-sm font-bold text-white">
               {cardCount} {plural(cardCount, 'слово', 'слова', 'слов')}
             </span>
@@ -56,7 +65,7 @@ export function VideoHeader({ deck, cardCount, pct, onNew }: Props) {
               className="inline-flex items-center gap-1.5 border border-ink-900 px-2.5 py-1 text-sm text-ink-900 transition hover:bg-ink-100"
             >
               <LinkIcon className="h-3.5 w-3.5" />
-              открыть на YouTube
+              YouTube
             </a>
           </div>
         </div>

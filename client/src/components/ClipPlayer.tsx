@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatTime } from '../lib/words';
+import { loadYouTubeApi, type YTPlayer } from '../lib/youtube';
 import { XIcon } from './Icons';
 
 export interface Clip {
@@ -15,44 +16,6 @@ export interface Clip {
 interface Props {
   clip: Clip;
   onClose: () => void;
-}
-
-/* ---------------- YouTube IFrame API loader (once per session) ---------------- */
-
-declare global {
-  interface Window {
-    YT?: {
-      Player: new (el: HTMLElement, opts: unknown) => YTPlayer;
-      PlayerState?: { PLAYING: number };
-    };
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
-
-interface YTPlayer {
-  seekTo(sec: number, allowSeekAhead: boolean): void;
-  playVideo(): void;
-  pauseVideo(): void;
-  getCurrentTime(): number;
-  destroy(): void;
-}
-
-let ytApi: Promise<NonNullable<Window['YT']>> | null = null;
-function loadYouTubeApi(): Promise<NonNullable<Window['YT']>> {
-  if (window.YT?.Player) return Promise.resolve(window.YT);
-  if (!ytApi) {
-    ytApi = new Promise((resolve) => {
-      const prev = window.onYouTubeIframeAPIReady;
-      window.onYouTubeIframeAPIReady = () => {
-        prev?.();
-        resolve(window.YT!);
-      };
-      const s = document.createElement('script');
-      s.src = 'https://www.youtube.com/iframe_api';
-      document.head.appendChild(s);
-    });
-  }
-  return ytApi;
 }
 
 /* ---------------- highlight the learned word in the phrase ---------------- */

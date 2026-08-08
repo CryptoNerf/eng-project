@@ -156,6 +156,14 @@ export function StudyView({ cards, onGrade, onKnown, onPlayClip, paused, onClose
                     <p className="text-2xl font-bold text-ink-900">
                       {current.translation || '—'}
                     </p>
+                    {current.senses && current.senses.length > 0 && (
+                      <p className="mx-auto mt-1 max-w-sm text-xs leading-snug text-ink-500">
+                        {current.senses
+                          .slice(0, 3)
+                          .map((s) => `${s.pos} ${s.meanings.slice(0, 3).join(', ')}`)
+                          .join(' · ')}
+                      </p>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

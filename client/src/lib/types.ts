@@ -25,11 +25,19 @@ export interface Example {
   end?: number; // phrase end (for the in-card clip player)
 }
 
+/** Dictionary meanings of one part of speech: «сущ.: вид, тип, сорт». */
+export interface Sense {
+  pos: string; // part of speech, already in Russian
+  meanings: string[];
+}
+
 export interface Card {
-  id: string; // lemma (key)
-  word: string; // display form = lemma
+  id: string; // lemma or phrase (key)
+  word: string; // display form
   forms?: string[]; // surface forms seen in the video (run, running, ran…)
-  translation: string; // RU ('' until fetched)
+  isPhrase?: boolean; // multi-word unit ("kind of", "figure out")
+  translation: string; // RU ('' until fetched) — most common meaning
+  senses?: Sense[]; // other meanings, so multi-sense words are obvious
   examples: Example[];
   count: number; // occurrences in this video (all forms)
   rank: number; // frequency rank (UNRANKED if not in common list)

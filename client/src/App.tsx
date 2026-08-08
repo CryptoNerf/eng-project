@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import { fetchTranscript, translateBatch, warmupIngest, ApiError } from './lib/api';
+import { translateWords } from './lib/translate';
 import { buildCards, exampleEnd, CARDS_VERSION, UNRANKED } from './lib/words';
 import { initialSrs, isDue, isLearnedSrs, review } from './lib/srs';
 import { auth } from './lib/firebase';
@@ -30,6 +31,7 @@ import type {
   Deck,
   DeckMeta,
   Difficulty,
+  Segment,
   Stats,
   StudyCard,
   WordState,
@@ -45,6 +47,8 @@ import { Logo } from './components/Logo';
 import { IngestOverlay } from './components/IngestOverlay';
 import { LoginModal } from './components/LoginModal';
 import { ClipPlayer, type Clip } from './components/ClipPlayer';
+import { WatchView } from './components/WatchView';
+import { WatchSummary } from './components/WatchSummary';
 import { BrainIcon } from './components/Icons';
 
 const DEFAULT_FILTER: Difficulty[] = ['medium', 'hard'];
@@ -76,6 +80,10 @@ export default function App() {
   const [studyCards, setStudyCards] = useState<StudyCard[] | null>(null);
   const [showLogin, setShowLogin] = useState(false);
   const [clip, setClip] = useState<Clip | null>(null);
+  // watch mode: the payoff step — rewatch the video with interactive subtitles
+  const [watch, setWatch] = useState<{ segments: Segment[] } | null>(null);
+  const [watchSummary, setWatchSummary] = useState<string[] | null>(null);
+  const segmentsCache = useRef(new Map<string, Segment[]>());
   // Mounting 300+ flip-cards at once janks phones for seconds — render the
   // grid incrementally instead.
   const [renderCount, setRenderCount] = useState(48);
@@ -288,9 +296,11 @@ export default function App() {
     for (let i = 0; i < missing.length; i += CHUNK) {
       if (token.current !== myToken) return; // user moved on
       const chunk = missing.slice(i, i + CHUNK);
-      let translations: string[];
+      let translations: Awaited<ReturnType<typeof translateWords>>;
       try {
-        translations = await translateBatch(chunk.map((c) => c.word));
+        // one request per word returns the main translation AND every
+        // dictionary meaning, so multi-sense words are visible on the card
+        translations = await translateWords(chunk.map((c) => c.word));
       } catch {
         continue;
       }
@@ -299,9 +309,12 @@ export default function App() {
       setDeck((prev) => {
         if (!prev || prev.videoId !== target.videoId) return prev;
         const map = new Map(chunk.map((c, j) => [c.id, translations[j]]));
-        const cards = prev.cards.map((c) =>
-          map.has(c.id) ? { ...c, translation: map.get(c.id)! } : c,
-        );
+        const cards = prev.cards.map((c) => {
+          const t = map.get(c.id);
+          return t
+            ? { ...c, translation: t.translation, senses: t.senses.length ? t.senses : undefined }
+            : c;
+        });
         latestCards = cards;
         return { ...prev, cards };
       });
@@ -394,6 +407,44 @@ export default function App() {
       srs: { ...w.srs, due: Date.now() },
       updatedAt: Date.now(),
     });
+  }
+
+  /** «Не узнал в видео» — back into the rotation, due right away. */
+  function relearnWord(key: string) {
+    const prev = words.get(key);
+    persistWord({
+      word: key,
+      status: 'learning',
+      srs: { ...(prev?.srs ?? initialSrs()), due: Date.now() },
+      sources: mergeSources(prev?.sources, deck?.videoId),
+      translation: prev?.translation || deck?.cards.find((c) => c.id === key)?.translation || '',
+      updatedAt: Date.now(),
+    });
+    track('word_relearn');
+  }
+
+  /** Open watch mode; subtitles come from the global transcript cache. */
+  async function openWatch() {
+    if (!deck) return;
+    const cached = segmentsCache.current.get(deck.videoId);
+    if (cached) {
+      setWatch({ segments: cached });
+      track('watch_started', { video_id: deck.videoId });
+      return;
+    }
+    setLoading(true);
+    setBusyKind('open');
+    try {
+      const t = await fetchTranscript(deck.videoId);
+      segmentsCache.current.set(deck.videoId, t.segments);
+      setWatch({ segments: t.segments });
+      track('watch_started', { video_id: deck.videoId });
+    } catch {
+      setError('Не удалось загрузить субтитры для просмотра.');
+    } finally {
+      setLoading(false);
+      setBusyKind(null);
+    }
   }
 
   /* ---------- derived: deck view ---------- */
@@ -619,7 +670,11 @@ export default function App() {
     <>
     {/* invisible while studying or playing a clip: 3D-flipped cards
         (preserve-3d) would otherwise paint through fixed overlays */}
-    <div className={`flex min-h-screen flex-col ${studyCards || clip ? 'invisible' : ''}`}>
+    <div
+      className={`flex min-h-screen flex-col ${
+        studyCards || clip || watch || watchSummary ? 'invisible' : ''
+      }`}
+    >
       <Header
         user={user}
         repo={repo}
@@ -640,6 +695,7 @@ export default function App() {
             cardCount={deck.cards.length}
             pct={deckPct}
             onNew={goHome}
+            onWatch={openWatch}
           />
           <Toolbar
             counts={counts}
@@ -788,6 +844,33 @@ export default function App() {
       )}
 
       {clip && <ClipPlayer clip={clip} onClose={() => setClip(null)} />}
+
+      {watch && deck && (
+        <WatchView
+          videoId={deck.videoId}
+          title={deck.title}
+          segments={watch.segments}
+          cards={deck.cards}
+          words={words}
+          onKnown={(key, translation) => markKnownWord(key, translation, deck.videoId)}
+          onRelearn={relearnWord}
+          onClose={(seen) => {
+            setWatch(null);
+            if (seen.length > 0) setWatchSummary(seen);
+            track('watch_finished', { words_seen: seen.length });
+          }}
+        />
+      )}
+
+      {watchSummary && deck && (
+        <WatchSummary
+          seen={watchSummary}
+          deck={deck}
+          words={words}
+          onRelearn={relearnWord}
+          onClose={() => setWatchSummary(null)}
+        />
+      )}
 
       {busyKind && <IngestOverlay elapsed={elapsed} mode={busyKind} />}
 

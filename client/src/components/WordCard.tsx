@@ -85,9 +85,18 @@ export function WordCard({ card, mastered, onReveal, onKnown, onPlayClip }: Prop
           </div>
 
           <div className="flex flex-1 flex-col items-center justify-center text-center">
-            <span className="break-all text-2xl font-bold lowercase tracking-tight">
+            <span
+              className={`lowercase font-bold tracking-tight ${
+                card.isPhrase ? 'break-words text-xl' : 'break-all text-2xl'
+              }`}
+            >
               {card.word}
             </span>
+            {card.isPhrase && (
+              <span style={{ color: paper.sub }} className="mt-0.5 text-[10px] font-bold">
+                устойчивое выражение
+              </span>
+            )}
             <span
               role="button"
               tabIndex={0}
@@ -114,13 +123,27 @@ export function WordCard({ card, mastered, onReveal, onKnown, onPlayClip }: Prop
           className="flip-face flip-back absolute inset-0 flex flex-col border border-dashed border-ink-900 bg-white p-3 text-left"
         >
           <div className="flex items-baseline justify-between gap-2">
-            <span className="break-all text-base font-bold lowercase text-ink-900">
+            <span className="break-words text-base font-bold lowercase text-ink-900">
               {card.word}
             </span>
             <span className="shrink-0 text-base font-bold text-ink-900">
               {card.translation ? `= ${card.translation}` : '…'}
             </span>
           </div>
+          {/* Other dictionary meanings — makes multi-sense words obvious */}
+          {card.senses && card.senses.length > 0 && (
+            <div className="mt-1 space-y-0.5">
+              {card.senses.slice(0, 3).map((s, i) => (
+                <p key={i} className="text-[11px] leading-tight text-ink-500">
+                  <span className="font-bold text-ink-400">{s.pos}</span>{' '}
+                  {s.meanings.join(', ')}
+                </p>
+              ))}
+              <p className="text-[10px] text-ink-400">
+                значение зависит от контекста — смотрите примеры
+              </p>
+            </div>
+          )}
           {onKnown && !mastered && (
             <span
               role="button"
