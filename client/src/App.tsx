@@ -48,7 +48,7 @@ import type {
 import { UrlForm } from './components/UrlForm';
 import { DeckList } from './components/DeckList';
 import { VideoHeader } from './components/VideoHeader';
-import { Toolbar, type SortKey } from './components/Toolbar';
+import { Toolbar, type SortKey, type StatusKey } from './components/Toolbar';
 import { WordCard } from './components/WordCard';
 import { StudyView } from './components/StudyView';
 import { Dictionary } from './components/Dictionary';
@@ -88,7 +88,7 @@ export default function App() {
   const [levelTest, setLevelTest] = useState(false);
 
   const [active, setActive] = useState<Set<Difficulty>>(new Set(DEFAULT_FILTER));
-  const [showMastered, setShowMastered] = useState(false);
+  const [status, setStatus] = useState<StatusKey>('learning');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('frequency');
   const [studyCards, setStudyCards] = useState<StudyCard[] | null>(null);
@@ -161,7 +161,7 @@ export default function App() {
   // reset the incremental grid whenever the visible set changes
   useEffect(() => {
     setRenderCount(48);
-  }, [deck?.videoId, active, search, sort, showMastered]);
+  }, [deck?.videoId, active, search, sort, status]);
 
   /* ---------- when repo is ready: migrate, load everything ---------- */
   useEffect(() => {
@@ -301,7 +301,7 @@ export default function App() {
       setDeck(newDeck);
       setShowDict(false);
       setActive(new Set(DEFAULT_FILTER));
-      setShowMastered(false);
+      setStatus('learning');
       setSearch('');
       setLoading(false);
       track('video_added', { video_id: t.videoId, cards: cards.length, auto_subs: t.auto });
@@ -568,7 +568,8 @@ export default function App() {
     if (!deck) return [];
     const q = search.trim().toLowerCase();
     let list = deck.cards.filter((c) => active.has(c.difficulty));
-    if (!showMastered) list = list.filter((c) => !isMastered(words.get(c.id)));
+    if (status === 'learning') list = list.filter((c) => !isMastered(words.get(c.id)));
+    else if (status === 'mastered') list = list.filter((c) => isMastered(words.get(c.id)));
     if (q) {
       list = list.filter(
         (c) => c.word.includes(q) || c.translation.toLowerCase().includes(q),
@@ -588,7 +589,7 @@ export default function App() {
       }
     });
     return list;
-  }, [deck, active, search, sort, words, showMastered]);
+  }, [deck, active, search, sort, words, status]);
 
   const dueCount = useMemo(() => {
     if (!deck) return 0;
@@ -726,7 +727,7 @@ export default function App() {
       setDeck(full);
       setShowDict(false);
       setActive(new Set(DEFAULT_FILTER));
-      setShowMastered(false);
+      setStatus('learning');
       setSearch('');
       track('deck_opened', { video_id: meta.videoId });
       translateAllWords(full, token.current);
@@ -844,8 +845,9 @@ export default function App() {
             visible={visible.length}
             dueCount={dueCount}
             masteredCount={masteredCount}
-            showMastered={showMastered}
-            onToggleMastered={() => setShowMastered((v) => !v)}
+            learningCount={deck.cards.length - masteredCount}
+            status={status}
+            onStatus={setStatus}
             onStudy={startStudy}
             onExportTsv={exportTsv}
             onExportCsv={exportCsv}
@@ -863,9 +865,11 @@ export default function App() {
           <div className="mx-auto max-w-6xl">
             {visible.length === 0 ? (
               <p className="py-20 text-center text-ink-400">
-                {masteredCount > 0 && !showMastered
-                  ? 'Все слова под этими фильтрами вы уже знаете. 🎉'
-                  : 'Ничего не найдено. Измените фильтры или запрос.'}
+                {status === 'mastered'
+                  ? 'Под этими фильтрами вы пока ничего не выучили.'
+                  : masteredCount > 0 && status === 'learning'
+                    ? 'Все слова под этими фильтрами вы уже знаете. 🎉'
+                    : 'Ничего не найдено. Измените фильтры или запрос.'}
               </p>
             ) : (
               <>

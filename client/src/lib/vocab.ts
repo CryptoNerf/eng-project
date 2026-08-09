@@ -29,6 +29,26 @@ export function pctMastered(wordIds: string[] | undefined, words: WordsMap): num
   return Math.round((n / wordIds.length) * 100);
 }
 
+/**
+ * How much a word counts towards understanding a video, 0..1.
+ *
+ * `assumed` is what the user's measured vocabulary already grants the word
+ * (1 for words more common than their frontier). Evidence may only move the
+ * weight AWAY from zero, never below what was assumed by mere recall:
+ * grading a common word «good» must not make the app think you know it less.
+ * Failing it, however, is real negative evidence and drops it to zero.
+ *
+ * Mastery takes four successful reviews spread over three weeks (SM-2 reaches
+ * a 21-day interval only then), so counting ONLY mastered words left the
+ * readiness bar frozen through the first weeks of study — the work was
+ * invisible. A word recalled at least once counts for half.
+ */
+export function knownWeight(ws: WordState | undefined, assumed = 0): number {
+  if (isMastered(ws)) return 1;
+  if (!ws) return assumed;
+  return ws.srs.reps > 0 ? Math.max(0.5, assumed) : 0;
+}
+
 /** Words due for review now (excluding manually-known). */
 export function dueWords(words: WordsMap, now = Date.now()): WordState[] {
   const due: WordState[] = [];

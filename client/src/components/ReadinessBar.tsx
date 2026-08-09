@@ -27,7 +27,8 @@ export function ReadinessBar({
   vocabulary,
   onCalibrate,
 }: Props) {
-  const { progressPct, pct, ready, comfortable, plan, planComfort, unknownEvery } = readiness;
+  const { progressPct, fullPct, partPct, learned, learning, pct } = readiness;
+  const { ready, comfortable, plan, planComfort, unknownEvery } = readiness;
   const compact = size === 'compact';
   const rest = planComfort.length - plan.length;
 
@@ -43,14 +44,16 @@ export function ReadinessBar({
       )}
 
       <div
-        title={`Знакомо ${readiness.knownUnits.toLocaleString('ru')} из ${readiness.total.toLocaleString('ru')} слов, звучащих в видео`}
+        title={HOW}
         className={`flex w-full border border-ink-900 bg-white ${compact ? 'h-1.5' : 'h-2.5'}`}
       >
-        <div className="bg-[#cfe36e]" style={{ width: `${progressPct}%` }} />
+        {/* same meaning as the word cards: green — выучено, жёлтый — в работе */}
+        <div className="bg-[#cfe36e]" style={{ width: `${fullPct}%` }} />
+        <div className="bg-[#f7dd4b]" style={{ width: `${partPct}%` }} />
       </div>
 
       {compact ? (
-        <p className="mt-1 text-[11px] text-ink-600">
+        <p className="mt-1 text-[11px] text-ink-600" title={HOW}>
           <span className="font-bold">готовность {progressPct}%</span>
           {unknownEvery > 0 && ` · незнакомо каждое ${unknownEvery}-е слово`}
         </p>
@@ -81,6 +84,12 @@ export function ReadinessBar({
               {Math.round(1 / (1 - COMFORT_TARGET))}-е, смотреть будет легко
             </p>
           )}
+          {/* what exactly moved the bar — otherwise studying feels like it
+              changes nothing for weeks */}
+          <p className="mt-1 text-[11px] text-ink-400" title={HOW}>
+            выучено {learned} · в работе {learning} (за половину) · впереди{' '}
+            {plan.length}
+          </p>
           {onCalibrate && (
             <button
               onClick={onCalibrate}
@@ -96,6 +105,13 @@ export function ReadinessBar({
     </div>
   );
 }
+
+const HOW =
+  'Полоса растёт, когда вы учите слова этого видео: выученное слово считается ' +
+  'целиком, слово в работе (вспомнили хотя бы раз) — наполовину. Частые слова ' +
+  'двигают её сильнее редких. Слова, которые ваш уровень и так считает ' +
+  'знакомыми, не двигают её вовсе — быстрее всего полосу заполняет кнопка ' +
+  '«учить ключевые». 100% — когда незнакомым останется каждое 10-е слово.';
 
 /** Plain-language reading of the ratio — the number alone misleads. */
 function verdict(pct: number): string {

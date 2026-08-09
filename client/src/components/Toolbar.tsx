@@ -4,6 +4,9 @@ import { DIFF_SWATCH } from '../lib/palette';
 import { BrainIcon, DownloadIcon, SearchIcon } from './Icons';
 
 export type SortKey = 'frequency' | 'difficulty' | 'alpha' | 'appearance';
+/** Which words to show. «выучено» has to be reachable on its own — a toggle
+ *  that only ADDED mastered words to the list could never isolate them. */
+export type StatusKey = 'learning' | 'mastered' | 'all';
 
 interface Props {
   counts: Record<Difficulty, number>;
@@ -16,8 +19,9 @@ interface Props {
   visible: number;
   dueCount: number;
   masteredCount: number;
-  showMastered: boolean;
-  onToggleMastered: () => void;
+  learningCount: number;
+  status: StatusKey;
+  onStatus: (s: StatusKey) => void;
   onStudy: () => void;
   onExportTsv: () => void;
   onExportCsv: () => void;
@@ -59,22 +63,23 @@ export function Toolbar(p: Props) {
             );
           })}
 
-          {/* Mastered toggle */}
-          {p.masteredCount > 0 && (
-            <button
-              onClick={p.onToggleMastered}
-              className={`inline-flex items-center gap-1 border px-1.5 py-1 text-xs font-medium transition sm:gap-1.5 sm:px-2.5 sm:py-1.5 sm:text-sm ${
-                p.showMastered
-                  ? 'border-ink-900 bg-[#cfe36e] text-ink-900'
-                  : 'border-ink-300 bg-white text-ink-400 hover:border-ink-900 hover:text-ink-900'
-              }`}
-              title="Показать слова, которые вы уже знаете"
-            >
-              ✓ выученные
-              <span className="text-[10px] opacity-60 sm:text-xs">{p.masteredCount}</span>
-            </button>
-          )}
         </div>
+
+        {/* Status: «в работе» / «выучено» / «все» */}
+        <select
+          value={p.status}
+          onChange={(e) => p.onStatus(e.target.value as StatusKey)}
+          className={`border px-2.5 py-2 text-sm outline-none ${
+            p.status === 'mastered'
+              ? 'border-ink-900 bg-[#cfe36e] font-bold text-ink-900'
+              : 'border-ink-900 bg-white text-ink-900'
+          }`}
+          title="Какие слова показывать"
+        >
+          <option value="learning">в работе · {p.learningCount}</option>
+          <option value="mastered">✓ выучено · {p.masteredCount}</option>
+          <option value="all">все слова · {p.learningCount + p.masteredCount}</option>
+        </select>
 
         {/* Search */}
         <div className="relative min-w-[160px] flex-1">

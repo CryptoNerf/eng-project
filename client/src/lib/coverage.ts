@@ -14,7 +14,7 @@
 // user has actually acted on overrides the assumption.
 
 import type { Card, DeckMeta, StoredCoverage } from './types';
-import { isMastered, type WordsMap } from './vocab';
+import { isMastered, knownWeight, type WordsMap } from './vocab';
 import { rankOf } from './words';
 
 /** Storage shape version — older payloads are ignored until a deck rebuild. */
@@ -57,6 +57,11 @@ export interface Readiness {
    * and fills as the words that actually block the video get learned.
    */
   progressPct: number;
+  /** Split of that progress: fully learned vs still in rotation (half credit). */
+  fullPct: number;
+  partPct: number;
+  learned: number; // deck words the user has learned
+  learning: number; // …and words currently in rotation
   pct: number; // 0..100 of the spoken words the user knows
   /** One unknown word every N — the number people can actually picture. */
   unknownEvery: number;
@@ -130,21 +135,35 @@ export function readinessOf(
   if (!cov) return null;
 
   let known = cov.base;
-  // words earned ABOVE the user's baseline — the work that moved this video
-  let earned = 0;
+  // work already done on this video: fully learned words and half-credit for
+  // the ones still in rotation. Kept apart so the bar can show both.
+  let earnedFull = 0;
+  let earnedPart = 0;
+  let learned = 0;
+  let learning = 0;
   const rest: { id: string; n: number }[] = [];
+
   cov.ids.forEach((id, i) => {
     const n = cov.counts[i];
     const state = words.get(id);
-    if (state) {
-      if (isMastered(state)) {
-        known += n;
-        if (rankOf(id) >= knownRank) earned += n;
-      } else rest.push({ id, n });
-      return;
+    // what the measured vocabulary already grants this word
+    const assumed = rankOf(id) < knownRank ? 1 : 0;
+    const w = knownWeight(state, assumed);
+    known += n * w;
+
+    // only progress BEYOND the baseline is the user's own doing — studying a
+    // word the model already counted as known moves nothing, by construction
+    const gain = Math.max(0, w - assumed) * n;
+    if (isMastered(state)) {
+      learned++;
+      earnedFull += gain;
+    } else if (state && state.srs.reps > 0) {
+      learning++;
+      earnedPart += gain;
     }
-    if (rankOf(id) < knownRank) known += n;
-    else rest.push({ id, n });
+
+    // whatever is left of the word still stands between the user and the video
+    if (w < 1) rest.push({ id, n: n * (1 - w) });
   });
 
   // one walk covers both rungs: the plan to «можно смотреть» is a prefix of
@@ -165,17 +184,21 @@ export function readinessOf(
   if (readyCount < 0) readyCount = planComfort.length;
 
   const unknown = Math.max(0, cov.total - known);
-
   const ready = known >= needReady;
 
+  // The bar measures distance travelled towards «можно смотреть»: work already
+  // done against work still in the way. Once ready, it is full by definition
+  // and the split just shows what that readiness rests on.
+  const span = ready ? Math.max(earnedFull + earnedPart, 1) : earnedFull + earnedPart + gained;
+  const fullPct = span > 0 ? (earnedFull / span) * 100 : 0;
+  const partPct = span > 0 ? (earnedPart / span) * 100 : 0;
+
   return {
-    // distance actually travelled towards «можно смотреть»: everything already
-    // earned, against everything still in the way
-    progressPct: ready
-      ? 100
-      : earned + gained > 0
-        ? Math.floor((earned / (earned + gained)) * 100)
-        : 0,
+    progressPct: ready ? 100 : Math.round(fullPct + partPct),
+    fullPct,
+    partPct,
+    learned,
+    learning,
     // floor, not round: «знакомо 90%» must never appear while the bar still
     // asks for more words
     pct: Math.floor((known / cov.total) * 100),
