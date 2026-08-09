@@ -21,10 +21,16 @@ import { rankOf } from './words';
 export const COVERAGE_V = 2;
 
 /**
- * Comprehension target. Below ~90% of running words a video stops holding
- * together; 95% is comfortable. 90% is the promise we make on the progress bar.
+ * Two rungs, not one.
+ *
+ * The percentage badly needs interpreting: 74% known words sounds like «I get
+ * most of it», but it means one word in four is unknown — about three unknown
+ * words in every subtitle line, which is unwatchable. At 90% it is one in ten
+ * (workable with tap-to-translate subtitles), at 95% one in twenty (relaxed).
+ * The UI therefore always states the ratio, never the percentage alone.
  */
 export const READY_TARGET = 0.9;
+export const COMFORT_TARGET = 0.95;
 
 /**
  * Fallback frontier. Only ever used once a level HAS been measured but the
@@ -42,11 +48,14 @@ export interface Coverage {
 }
 
 export interface Readiness {
-  pct: number; // 0..100 of the speech understood right now
-  targetPct: number; // 0..100 the goal on the bar
-  ready: boolean; // target reached — time to watch
-  plan: string[]; // words that get there, biggest win first
-  gainPct: number; // points the plan adds
+  pct: number; // 0..100 of the spoken words the user knows
+  /** One unknown word every N — the number people can actually picture. */
+  unknownEvery: number;
+  ready: boolean; // ≥ READY_TARGET: watchable with the app's subtitles
+  comfortable: boolean; // ≥ COMFORT_TARGET
+  plan: string[]; // words to reach READY_TARGET, biggest win first
+  planComfort: string[]; // …and to reach COMFORT_TARGET
+  gainPct: number; // points `plan` adds — the yellow part of the bar
   knownUnits: number; // familiar words spoken — the numerator, shown as-is
   total: number; // words spoken in the video — the denominator
 }
@@ -125,22 +134,34 @@ export function readinessOf(
     else rest.push({ id, n });
   });
 
-  const needed = Math.ceil(cov.total * target) - known;
-  const plan: string[] = [];
+  // one walk covers both rungs: the plan to «можно смотреть» is a prefix of
+  // the plan to «комфортно»
+  const needReady = Math.ceil(cov.total * target);
+  const needComfort = Math.ceil(cov.total * COMFORT_TARGET);
+  const planComfort: string[] = [];
+  let readyCount = -1;
+  let acc = known;
   let gained = 0;
   for (const r of rest) {
-    if (gained >= needed) break;
-    gained += r.n;
-    plan.push(r.id);
+    if (acc >= needComfort) break;
+    if (readyCount < 0 && acc >= needReady) readyCount = planComfort.length;
+    acc += r.n;
+    if (readyCount < 0) gained += r.n;
+    planComfort.push(r.id);
   }
+  if (readyCount < 0) readyCount = planComfort.length;
+
+  const unknown = Math.max(0, cov.total - known);
 
   return {
-    // floor, not round: «понятно 90%» must never appear while the bar still
+    // floor, not round: «знакомо 90%» must never appear while the bar still
     // asks for more words
     pct: Math.floor((known / cov.total) * 100),
-    targetPct: Math.round(target * 100),
-    ready: needed <= 0,
-    plan,
+    unknownEvery: unknown > 0 ? Math.round(cov.total / unknown) : 0,
+    ready: known >= needReady,
+    comfortable: known >= needComfort,
+    plan: planComfort.slice(0, readyCount),
+    planComfort,
     gainPct: Math.round((gained / cov.total) * 100),
     knownUnits: Math.round(known),
     total: cov.total,

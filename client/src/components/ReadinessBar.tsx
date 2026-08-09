@@ -1,4 +1,4 @@
-import type { Readiness } from '../lib/coverage';
+import { COMFORT_TARGET, READY_TARGET, type Readiness } from '../lib/coverage';
 
 interface Props {
   readiness: Readiness;
@@ -19,11 +19,12 @@ interface Props {
  * session takes them. Same two colours as the word cards.
  */
 export function ReadinessBar({ readiness, size = 'full' }: Props) {
-  const { pct, gainPct, targetPct, ready, plan, knownUnits, total } = readiness;
+  const { pct, gainPct, ready, comfortable, plan, planComfort, unknownEvery } = readiness;
   const compact = size === 'compact';
+  const rest = planComfort.length - plan.length;
 
   return (
-    <div className={compact ? '' : 'w-full max-w-sm'}>
+    <div className={compact ? '' : 'w-full max-w-md'}>
       {!compact && (
         <div className="mb-1 flex items-baseline justify-between gap-2">
           <span className="text-[11px] font-bold uppercase tracking-wide text-ink-500">
@@ -34,35 +35,56 @@ export function ReadinessBar({ readiness, size = 'full' }: Props) {
       )}
 
       <div
+        title={`Знакомо ${readiness.knownUnits.toLocaleString('ru')} из ${readiness.total.toLocaleString('ru')} слов, звучащих в видео`}
         className={`flex w-full border border-ink-900 bg-white ${compact ? 'h-1.5' : 'h-2.5'}`}
       >
         <div className="bg-[#cfe36e]" style={{ width: `${pct}%` }} />
         {!ready && <div className="bg-[#f7dd4b]" style={{ width: `${gainPct}%` }} />}
       </div>
 
-      <p className={`mt-1 ${compact ? 'text-[11px] text-ink-600' : 'text-xs text-ink-700'}`}>
-        {compact && <span className="font-bold">понятно {pct}%</span>}
-        {ready ? (
-          <span className={compact ? ' text-ink-500' : 'font-bold'}>
-            {compact ? ' · можно смотреть' : `знаете ${targetPct}%+ слов этого видео — можно смотреть`}
-          </span>
-        ) : (
-          <span>
-            {compact ? ' · ' : ''}
-            до {targetPct}% — {plan.length} {plural(plan.length, 'слово', 'слова', 'слов')}
-          </span>
-        )}
-      </p>
-
-      {!compact && (
-        // the percentage in plain arithmetic, so it is never a black box
-        <p className="mt-0.5 text-[11px] text-ink-400">
-          знакомо {knownUnits.toLocaleString('ru')} из {total.toLocaleString('ru')} слов,
-          звучащих в видео
+      {compact ? (
+        <p className="mt-1 text-[11px] text-ink-600">
+          <span className="font-bold">знакомо {pct}%</span>
+          {unknownEvery > 0 && ` · незнакомо каждое ${unknownEvery}-е слово`}
         </p>
+      ) : (
+        <>
+          {/* the percentage on its own misleads: 74% reads as «почти всё», but
+              it means three unknown words in every subtitle line */}
+          <p className="mt-1 text-xs text-ink-700">
+            {unknownEvery > 0 ? (
+              <>
+                незнакомо каждое <b>{unknownEvery}-е</b> слово — {verdict(pct)}
+              </>
+            ) : (
+              'вы знаете здесь каждое слово'
+            )}
+          </p>
+          {!ready && plan.length > 0 && (
+            <p className="mt-0.5 text-xs text-ink-500">
+              выучите <b className="text-ink-900">{plan.length}</b>{' '}
+              {plural(plan.length, 'слово', 'слова', 'слов')} → станет каждое{' '}
+              {Math.round(1 / (1 - READY_TARGET))}-е, уже можно смотреть
+            </p>
+          )}
+          {!comfortable && rest > 0 && (
+            <p className="mt-0.5 text-xs text-ink-400">
+              и ещё {rest} {plural(rest, 'слово', 'слова', 'слов')} → каждое{' '}
+              {Math.round(1 / (1 - COMFORT_TARGET))}-е, смотреть будет легко
+            </p>
+          )}
+        </>
       )}
     </div>
   );
+}
+
+/** Plain-language reading of the ratio — the number alone misleads. */
+function verdict(pct: number): string {
+  if (pct >= 95) return 'смотреть легко';
+  if (pct >= 90) return 'смотреть уже можно';
+  if (pct >= 80) return 'будет тяжеловато';
+  return 'смотреть пока тяжело';
 }
 
 /**

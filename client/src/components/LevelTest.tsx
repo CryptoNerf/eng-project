@@ -4,6 +4,7 @@ import {
   estimateVocabulary,
   pickTestWords,
   type Answer,
+  type Estimate,
   type TestItem,
 } from '../lib/level';
 import { translateBatch } from '../lib/translate';
@@ -29,7 +30,9 @@ export function LevelTest({ skip, onDone, onClose }: Props) {
   const [failed, setFailed] = useState(false);
   const [i, setI] = useState(0);
   const answers = useRef<Answer[]>([]);
-  const [result, setResult] = useState<number | null>(null);
+  const [result, setResult] = useState<Estimate | null>(null);
+  // the estimate is a measurement, not a verdict — the user can overrule it
+  const [override, setOverride] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,17 +83,75 @@ export function LevelTest({ skip, onDone, onClose }: Props) {
               ваш словарь
             </h2>
             <p className="mt-2 text-4xl font-bold text-ink-900">
-              ≈ {result.toLocaleString('ru')} слов
+              ≈ {(override ?? result.vocabulary).toLocaleString('ru')} слов
             </p>
-            <p className="mt-3 text-sm leading-relaxed text-ink-600">
-              Теперь «готовность к видео» считается по вашему словарю. Она
-              показывает, какую долю звучащих слов вы знаете, — это не то же
-              самое, что понимать речь на слух, но именно словарь обычно и
-              мешает.
+
+            <p className="mt-4 text-[11px] font-bold uppercase tracking-wide text-ink-500">
+              как это посчитано
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-500">
+              Слова брались не подряд, а из девяти групп по частоте — от самых
+              употребимых к редким. Граница проходит там, где вы перестали
+              узнавать: всё, что чаще неё, считается знакомым.
+            </p>
+            <ul className="mt-2 max-h-52 overflow-y-auto border border-ink-200">
+              {result.bands.map((b) => (
+                <li
+                  key={b.from}
+                  className="flex items-center gap-2 border-b border-ink-100 px-2 py-1 text-[11px] last:border-b-0"
+                >
+                  <span className="w-24 shrink-0 tabular-nums text-ink-500">
+                    {b.from === 0 ? 1 : b.from}–{b.to}
+                  </span>
+                  <span className="w-12 shrink-0 tabular-nums text-ink-400">
+                    {b.ok}/{b.asked}
+                  </span>
+                  <span className="h-1.5 flex-1 border border-ink-300 bg-white">
+                    <span
+                      className="block h-full bg-[#cfe36e]"
+                      style={{ width: `${Math.round(b.share * 100)}%` }}
+                    />
+                  </span>
+                  <span className="w-10 shrink-0 text-right tabular-nums text-ink-500">
+                    {Math.round(b.share * 100)}%
+                  </span>
+                </li>
+              ))}
+            </ul>
+
+            <p className="mt-4 text-xs text-ink-500">не согласны? поставьте своё:</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {LEVELS.map((l) => (
+                <button
+                  key={l.value}
+                  onClick={() => setOverride(l.value)}
+                  className={`border px-2 py-1 text-xs transition ${
+                    override === l.value
+                      ? 'border-ink-900 bg-[#f7dd4b] font-bold text-ink-900'
+                      : 'border-ink-300 text-ink-600 hover:bg-ink-100'
+                  }`}
+                >
+                  {l.label}
+                </button>
+              ))}
+              {override !== null && (
+                <button
+                  onClick={() => setOverride(null)}
+                  className="border border-dashed border-ink-300 px-2 py-1 text-xs text-ink-500 transition hover:bg-ink-100"
+                >
+                  вернуть результат теста
+                </button>
+              )}
+            </div>
+
+            <p className="mt-4 text-sm leading-relaxed text-ink-600">
+              «Готовность к видео» теперь считается по вашему словарю: она
+              показывает долю звучащих слов, которые вы знаете. Это не то же
+              самое, что понимать речь на слух, но обычно мешает именно словарь.
             </p>
             <button
-              onClick={() => onDone(result)}
-              className="mt-5 w-full border-2 border-ink-900 bg-[#cfe36e] px-4 py-2.5 text-sm font-bold text-ink-900 transition hover:opacity-90"
+              onClick={() => onDone(override ?? result.vocabulary)}
+              className="mt-4 w-full border-2 border-ink-900 bg-[#cfe36e] px-4 py-2.5 text-sm font-bold text-ink-900 transition hover:opacity-90"
             >
               применить
             </button>
@@ -157,3 +218,11 @@ export function LevelTest({ skip, onDone, onClose }: Props) {
     </div>
   );
 }
+
+/** Rough CEFR-to-vocabulary anchors, for overruling the measurement by hand. */
+const LEVELS = [
+  { value: 1000, label: '≈1 000 · A2' },
+  { value: 2000, label: '≈2 000 · B1' },
+  { value: 3500, label: '≈3 500 · B2' },
+  { value: 6000, label: '≈6 000 · C1' },
+];

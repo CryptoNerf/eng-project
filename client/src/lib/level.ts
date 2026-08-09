@@ -128,19 +128,34 @@ export function buildItems(
 /** What the user did with one item. «skip» is an explicit «не знаю». */
 export type Answer = 'ok' | 'miss' | 'skip';
 
+/** Per-band outcome, shown to the user so the estimate isn't a black box. */
+export interface BandResult {
+  from: number;
+  to: number;
+  asked: number;
+  ok: number;
+  share: number; // 0..1 known, after guess-correction and smoothing
+}
+
+export interface Estimate {
+  vocabulary: number;
+  bands: BandResult[];
+}
+
 /**
- * Vocabulary size from the answers: for every band, the share of words known,
- * times the band's width.
+ * Vocabulary size from the answers: for every frequency band, the share of
+ * words known, times the band's width.
  *
  * Guessing is corrected for only among items the user actually attempted — an
  * explicit «не знаю» involves no guess, so penalising it as one would
- * understate the result. Skipped items simply count as unknown.
+ * understate the result. Skipped items count as unknown.
  *
- * Recognition is monotone in frequency, so the running share is clamped to be
- * non-increasing across bands: one lucky guess deep in the rare words must not
- * outweigh a whole band the user actually failed.
+ * Recognition can only fall as words get rarer, so the per-band shares are
+ * fitted with isotonic regression (pool adjacent violators). An earlier
+ * running-minimum version was far too harsh: one unlucky band with two
+ * questions zeroed out everything rarer than it.
  */
-export function estimateVocabulary(items: TestItem[], answers: Answer[]): number {
+export function estimateVocabulary(items: TestItem[], answers: Answer[]): Estimate {
   const stats = BANDS.map(() => ({ ok: 0, tried: 0, n: 0 }));
   items.forEach((item, i) => {
     const s = stats[item.band];
@@ -150,21 +165,66 @@ export function estimateVocabulary(items: TestItem[], answers: Answer[]): number
     if (answers[i] === 'ok') s.ok++;
   });
 
-  let ceiling = 1;
-  let total = 0;
-  BANDS.forEach(([from, to], band) => {
-    const { ok, tried, n } = stats[band];
-    // A band whose items were all dropped inherits the level around it rather
-    // than counting as zero.
-    if (n > 0) {
-      const corrected =
-        tried > 0 ? Math.max(0, (ok / tried - 1 / OPTIONS) / (1 - 1 / OPTIONS)) : 0;
-      ceiling = Math.min(ceiling, (corrected * tried) / n);
+  // raw share per band, corrected for 1-in-4 guessing among attempts
+  const asked: number[] = [];
+  const raw: number[] = [];
+  stats.forEach(({ ok, tried, n }) => {
+    asked.push(n);
+    if (n === 0) {
+      raw.push(NaN);
+      return;
     }
-    total += ceiling * (to - from);
+    // deliberately NOT clamped at zero here: with 2-3 questions per band,
+    // clamping each band separately lets noise only ever push the estimate up
+    // (a pure guesser scored ~1300 words that way). Negative slack cancels
+    // across bands during the fit instead; the result is clamped afterwards.
+    const hit = tried > 0 ? (ok / tried - 1 / OPTIONS) / (1 - 1 / OPTIONS) : 0;
+    raw.push((hit * tried) / n);
   });
 
-  return Math.round(total);
+  const fitted = fillGaps(isotonic(raw, asked)).map((v) => Math.min(1, Math.max(0, v)));
+
+  let vocabulary = 0;
+  const bands: BandResult[] = BANDS.map(([from, to], i) => {
+    vocabulary += fitted[i] * (to - from);
+    return { from, to, asked: stats[i].n, ok: stats[i].ok, share: fitted[i] };
+  });
+
+  return { vocabulary: Math.round(vocabulary), bands };
+}
+
+/** Best non-increasing fit of `values` weighted by `weights` (PAVA). */
+function isotonic(values: number[], weights: number[]): number[] {
+  const blocks: { sum: number; w: number; from: number; to: number }[] = [];
+  values.forEach((v, i) => {
+    if (Number.isNaN(v) || weights[i] === 0) return; // untested band
+    let b = { sum: v * weights[i], w: weights[i], from: i, to: i };
+    while (blocks.length) {
+      const prev = blocks[blocks.length - 1];
+      if (prev.sum / prev.w >= b.sum / b.w) break; // already non-increasing
+      blocks.pop();
+      b = { sum: prev.sum + b.sum, w: prev.w + b.w, from: prev.from, to: b.to };
+    }
+    blocks.push(b);
+  });
+
+  const out = values.map(() => NaN);
+  for (const b of blocks) {
+    const mean = b.sum / b.w;
+    for (let i = b.from; i <= b.to; i++) if (!Number.isNaN(values[i])) out[i] = mean;
+  }
+  return out;
+}
+
+/** A band whose questions were all dropped inherits its nearest neighbour. */
+function fillGaps(v: number[]): number[] {
+  const out = [...v];
+  let last = 1;
+  for (let i = 0; i < out.length; i++) {
+    if (Number.isNaN(out[i])) out[i] = last;
+    else last = out[i];
+  }
+  return out;
 }
 
 function shuffle<T>(a: T[]): T[] {
