@@ -25,7 +25,7 @@ import {
   reviewsToday,
   type WordsMap,
 } from './lib/vocab';
-import { coverageFromCards, readinessOf } from './lib/coverage';
+import { coverageFromCards, readinessOf, DEFAULT_KNOWN_RANK } from './lib/coverage';
 import {
   analyzeChapters,
   canSplitIntoChapters,
@@ -37,6 +37,7 @@ import type {
   Card,
   Chapter,
   Deck,
+  Profile,
   DeckMeta,
   Difficulty,
   Segment,
@@ -58,6 +59,7 @@ import { ClipPlayer, type Clip } from './components/ClipPlayer';
 import { WatchView } from './components/WatchView';
 import { WatchSummary } from './components/WatchSummary';
 import { ChapterList } from './components/ChapterList';
+import { LevelTest } from './components/LevelTest';
 import { BrainIcon } from './components/Icons';
 
 const DEFAULT_FILTER: Difficulty[] = ['medium', 'hard'];
@@ -81,6 +83,9 @@ export default function App() {
 
   const [words, setWords] = useState<WordsMap>(new Map());
   const [stats, setStats] = useState<Stats>({ days: {} });
+  // the user's own vocabulary level — «готовность» is meaningless without it
+  const [profile, setProfile] = useState<Profile>({});
+  const [levelTest, setLevelTest] = useState(false);
 
   const [active, setActive] = useState<Set<Difficulty>>(new Set(DEFAULT_FILTER));
   const [showMastered, setShowMastered] = useState(false);
@@ -217,6 +222,14 @@ export default function App() {
             if (!cancelled) setStats(s);
           } catch {
             /* keep empty stats */
+          }
+        })(),
+        (async () => {
+          try {
+            const p = await repo.loadProfile();
+            if (!cancelled) setProfile(p);
+          } catch {
+            /* an unmeasured level still works, it is just labelled «≈» */
           }
         })(),
       ]);
@@ -521,12 +534,34 @@ export default function App() {
     [deck, words],
   );
 
+  const knownRank = profile.knownRank ?? DEFAULT_KNOWN_RANK;
+  const measured = !!profile.calibratedAt;
+
   // «готовность к видео»: share of the SPOKEN words the user understands.
   // Null for decks built before coverage — they get it when rebuilt on open.
   const deckReadiness = useMemo(
-    () => readinessOf(coverageFromCards(deck?.cards || [], deck?.totalWords), words),
-    [deck, words],
+    () =>
+      readinessOf(
+        coverageFromCards(deck?.cards || [], deck?.totalWords),
+        words,
+        knownRank,
+        measured,
+      ),
+    [deck, words, knownRank, measured],
   );
+
+  /** Store the measured vocabulary size and recompute every readiness with it. */
+  function applyLevel(vocabulary: number) {
+    const next: Profile = {
+      knownRank: Math.max(200, Math.min(10000, vocabulary)),
+      vocabEstimate: vocabulary,
+      calibratedAt: Date.now(),
+    };
+    setProfile(next);
+    setLevelTest(false);
+    track('level_measured', { vocabulary });
+    repo?.saveProfile(next).catch((e) => console.warn('Не удалось сохранить уровень:', e));
+  }
 
   const visible = useMemo(() => {
     if (!deck) return [];
@@ -776,6 +811,7 @@ export default function App() {
             cardCount={deck.cards.length}
             pct={deckPct}
             readiness={deckReadiness}
+            onCalibrate={() => setLevelTest(true)}
             showChapters={canSplitIntoChapters(deck.duration)}
             chapterCount={chapterInfo?.length || null}
             chaptersOpen={chaptersOpen}
@@ -788,6 +824,8 @@ export default function App() {
             <ChapterList
               chapters={chapterInfo}
               words={words}
+              knownRank={knownRank}
+              measured={measured}
               onStudy={startPlanStudy}
               onWatch={(start) => openWatch(start)}
             />
@@ -863,7 +901,7 @@ export default function App() {
         <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pt-6">
         {/* pb ~18vh biases flex-centering upward: optical center above geometric */}
         <div className="flex flex-1 flex-col justify-center pb-[18vh]">
-          {words.size > 0 && (
+          {(words.size > 0 || decks.length > 0) && (
             <div className="mb-5 flex flex-wrap items-center justify-center gap-2 text-sm">
               {streak > 0 && (
                 <span className="border border-ink-900 bg-[#f2d94c] px-3 py-1.5 font-bold text-ink-900">
@@ -878,6 +916,19 @@ export default function App() {
                   сегодня: {todayReviews} повт.
                 </span>
               )}
+              <button
+                onClick={() => setLevelTest(true)}
+                className={`border px-3 py-1.5 transition hover:bg-ink-100 ${
+                  measured
+                    ? 'border-ink-900 bg-white font-bold text-ink-900'
+                    : 'border-dashed border-ink-400 text-ink-500'
+                }`}
+                title="Проверка словарного запаса — от неё зависит «готовность к видео»"
+              >
+                {measured
+                  ? `словарь: ≈${(profile.vocabEstimate ?? knownRank).toLocaleString('ru')} слов`
+                  : 'проверить словарь'}
+              </button>
             </div>
           )}
 
@@ -907,6 +958,8 @@ export default function App() {
           <DeckList
             decks={decks}
             words={words}
+            knownRank={knownRank}
+            measured={measured}
             loading={decksLoading}
             onOpen={openDeck}
             onDelete={removeDeck}
@@ -955,6 +1008,14 @@ export default function App() {
             if (seen.length > 0) setWatchSummary(seen);
             track('watch_finished', { words_seen: seen.length });
           }}
+        />
+      )}
+
+      {levelTest && (
+        <LevelTest
+          skip={new Set(words.keys())}
+          onDone={applyLevel}
+          onClose={() => setLevelTest(false)}
         />
       )}
 

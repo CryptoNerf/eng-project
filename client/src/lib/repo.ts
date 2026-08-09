@@ -21,7 +21,7 @@ import { db } from './firebase';
 import { UNRANKED } from './words';
 import { buildCoverage } from './coverage';
 import * as local from './storage';
-import type { Card, Deck, DeckMeta, Stats, WordState } from './types';
+import type { Card, Deck, DeckMeta, Profile, Stats, WordState } from './types';
 
 export interface Repo {
   kind: 'cloud' | 'local';
@@ -37,6 +37,10 @@ export interface Repo {
 
   loadStats(): Promise<Stats>;
   saveStats(stats: Stats): Promise<void>;
+
+  /** Measured vocabulary level — what «готовность» is calculated against. */
+  loadProfile(): Promise<Profile>;
+  saveProfile(profile: Profile): Promise<void>;
 }
 
 const CARDS_PER_CHUNK = 150;
@@ -170,6 +174,15 @@ export function cloudRepo(uid: string): Repo {
     async saveStats(stats) {
       await setDoc(userDoc('stats', 'summary'), stats, { merge: true });
     },
+
+    async loadProfile() {
+      const snap = await getDoc(userDoc('stats', 'profile'));
+      return snap.exists() ? (snap.data() as Profile) : {};
+    },
+
+    async saveProfile(profile) {
+      await setDoc(userDoc('stats', 'profile'), profile, { merge: true });
+    },
   };
 }
 
@@ -269,6 +282,14 @@ export const localRepo: Repo = {
 
   async saveStats(stats) {
     local.saveStatsLocal(stats);
+  },
+
+  async loadProfile() {
+    return local.loadProfileLocal();
+  },
+
+  async saveProfile(profile) {
+    local.saveProfileLocal(profile);
   },
 };
 

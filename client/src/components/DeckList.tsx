@@ -9,12 +9,22 @@ import { ReadinessBar } from './ReadinessBar';
 interface Props {
   decks: DeckMeta[];
   words: WordsMap;
+  knownRank: number;
+  measured: boolean;
   loading?: boolean;
   onOpen: (deck: DeckMeta) => void;
   onDelete: (videoId: string) => void;
 }
 
-export function DeckList({ decks, words, loading, onOpen, onDelete }: Props) {
+export function DeckList({
+  decks,
+  words,
+  knownRank,
+  measured,
+  loading,
+  onOpen,
+  onDelete,
+}: Props) {
   if (decks.length === 0 && loading) {
     return (
       <div className="mx-auto mt-14 w-full max-w-3xl">
@@ -41,7 +51,7 @@ export function DeckList({ decks, words, loading, onOpen, onDelete }: Props) {
           // «понятно X%» beats «знаете X%»: it answers whether this video is
           // watchable today. Decks built before coverage fall back to the old
           // number until they are opened and rebuilt.
-          const readiness = readinessOf(decodeCoverage(d.coverage), words);
+          const readiness = readinessOf(decodeCoverage(d), words, knownRank, measured);
           const pct = readiness ? null : pctMastered(d.wordIds, words);
           return (
           <div

@@ -8,6 +8,8 @@ import { ReadinessBar } from './ReadinessBar';
 interface Props {
   chapters: ChapterInfo[] | null; // null while the transcript loads
   words: WordsMap;
+  knownRank: number;
+  measured: boolean;
   onStudy: (ids: string[]) => void;
   onWatch: (start: number) => void;
 }
@@ -19,7 +21,14 @@ interface Props {
  * chapters needs ~11. That is a single sitting, and the payoff — watching those
  * minutes and understanding them — comes the same evening.
  */
-export function ChapterList({ chapters, words, onStudy, onWatch }: Props) {
+export function ChapterList({
+  chapters,
+  words,
+  knownRank,
+  measured,
+  onStudy,
+  onWatch,
+}: Props) {
   if (chapters === null) {
     return (
       <div className="mx-auto mb-6 max-w-6xl">
@@ -38,7 +47,9 @@ export function ChapterList({ chapters, words, onStudy, onWatch }: Props) {
     );
   }
 
-  const done = chapters.filter((c) => readinessOf(c.coverage, words)?.ready).length;
+  const done = chapters.filter(
+    (c) => readinessOf(c.coverage, words, knownRank, measured)?.ready,
+  ).length;
 
   return (
     <div className="mx-auto mb-6 max-w-6xl border border-ink-900 bg-white p-3 sm:p-4">
@@ -53,7 +64,7 @@ export function ChapterList({ chapters, words, onStudy, onWatch }: Props) {
 
       <ul className="flex flex-col gap-2">
         {chapters.map((info) => {
-          const r = readinessOf(info.coverage, words);
+          const r = readinessOf(info.coverage, words, knownRank, measured);
           const mins = Math.max(1, Math.round((info.chapter.end - info.chapter.start) / 60));
           return (
             <li

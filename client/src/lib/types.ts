@@ -122,12 +122,31 @@ export interface DeckMeta {
  *
  * Understanding depends on how much of the SPOKEN WORDS you know, not on how
  * many of the deck's unique words you know — a handful of frequent words buys
- * most of the video. Counts are a comma-joined string: a 570-word deck costs
- * ~1.5 KB that way instead of ~9 KB as a number array.
+ * most of the video.
+ *
+ * Deliberately minimal: ids come from `wordIds`, and each word's frequency
+ * rank is recomputed from the id itself, so only the counts are stored — a
+ * comma-joined string costs ~1.5 KB for a 570-word deck instead of ~9 KB as a
+ * number array. Nothing here depends on the user, so the same document serves
+ * any vocabulary level.
  */
 export interface StoredCoverage {
+  v: number; // shape version; older payloads are ignored
   total: number; // word units spoken in the video
-  base: number; // units understood before learning anything new
-  ids: string[]; // words worth learning, most frequent first
-  counts: string; // their occurrence counts, parallel to ids
+  base: number; // units that belong to no card (function words, junk)
+  counts: string; // occurrence count per card, parallel to wordIds
+}
+
+/**
+ * What the app knows about the user's own English.
+ *
+ * `knownRank` is the vocabulary frontier: words more common than this are
+ * assumed known. It has to be MEASURED — a fixed guess makes every video show
+ * the same readiness, because the top 1000 English words alone cover ~72% of
+ * running speech in any video.
+ */
+export interface Profile {
+  knownRank?: number;
+  vocabEstimate?: number; // words known, as measured by the test
+  calibratedAt?: number;
 }

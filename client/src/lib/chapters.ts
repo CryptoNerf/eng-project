@@ -11,7 +11,7 @@
 // by time on sentence boundaries.
 
 import type { Card, Chapter, Segment } from './types';
-import { buildLines, countUnitsOfLines, EASY_MAX, transcriptVocab } from './words';
+import { buildLines, countUnitsOfLines, transcriptVocab } from './words';
 import type { Coverage } from './coverage';
 
 /** Shorter videos are one sitting already — chapters would just add noise. */
@@ -99,7 +99,9 @@ export function analyzeChapters(
   cards: Card[],
 ): ChapterInfo[] {
   const local = transcriptVocab(segments);
-  const learnable = new Set(cards.filter((c) => c.rank >= EASY_MAX).map((c) => c.id));
+  // every card is a candidate — whether a word counts as known depends on the
+  // user's measured level, which readinessOf applies later
+  const learnable = new Set(cards.map((c) => c.id));
   const lines = buildLines(segments);
 
   return chapters.map((chapter) => {

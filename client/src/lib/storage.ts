@@ -1,8 +1,9 @@
-import type { Deck, Stats, WordState } from './types';
+import type { Deck, Profile, Stats, WordState } from './types';
 
 const KEY = 'molly.decks.v1';
 const WORDS_KEY = 'molly.words.v1';
 const STATS_KEY = 'molly.stats.v1';
+const PROFILE_KEY = 'molly.profile.v1';
 
 export function loadDecks(): Deck[] {
   try {
@@ -75,6 +76,24 @@ export function loadStatsLocal(): Stats {
 export function saveStatsLocal(stats: Stats): void {
   try {
     localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadProfileLocal(): Profile {
+  try {
+    const raw = localStorage.getItem(PROFILE_KEY);
+    const p = raw ? (JSON.parse(raw) as Profile) : {};
+    return p && typeof p === 'object' ? p : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveProfileLocal(profile: Profile): void {
+  try {
+    localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
   } catch {
     /* ignore */
   }

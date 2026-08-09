@@ -15,7 +15,7 @@ export const UNRANKED = 100000;
 
 // Bump when the card-building pipeline changes meaningfully — decks built
 // with an older version are rebuilt from the cached transcript on open.
-export const CARDS_VERSION = 4;
+export const CARDS_VERSION = 5;
 
 const MAX_EXAMPLES = 5;
 
@@ -101,6 +101,21 @@ function rankForWord(lemma: string): number {
   return RANK.get(lemma.replace(/'/g, '')) ?? UNRANKED;
 }
 
+/**
+ * Frequency rank of a card id. Rank is a pure function of the id, so coverage
+ * data never has to store it — the client recomputes it on read.
+ */
+export function rankOf(id: string): number {
+  return id.includes(' ') ? rankForPhrase(id) : rankForWord(id);
+}
+
+/** The n-th most common English word, for the vocabulary test. */
+export function wordAtRank(rank: number): string | undefined {
+  return COMMON_WORDS[rank];
+}
+
+export const VOCAB_SIZE = COMMON_WORDS.length;
+
 /** Lowercase and strip punctuation, keeping short function words intact. */
 function normalizeToken(raw: string): string {
   return raw
@@ -164,20 +179,44 @@ interface Unit {
 /** Break the transcript into context units (sentences) with start/end times. */
 function buildUnits(t: Transcript): Unit[] {
   let text = '';
-  const offsets: { pos: number; start: number; end: number }[] = [];
+  const cues: { pos: number; len: number; start: number; end: number }[] = [];
   t.segments.forEach((s, i) => {
     if (i > 0) text += ' ';
-    offsets.push({ pos: text.length, start: s.start, end: s.end });
+    cues.push({ pos: text.length, len: s.text.length, start: s.start, end: s.end });
     text += s.text;
   });
 
-  const segAtPos = (pos: number) => {
-    let seg = offsets[0];
-    for (const o of offsets) {
-      if (o.pos <= pos) seg = o;
-      else break;
+  // Auto-generated captions roll: a cue's stated end routinely runs ~2 s into
+  // the next one (measured: every cue of a 1700-cue ASR track). Left alone,
+  // every line stays lit long after it was spoken.
+  for (let i = 0; i < cues.length - 1; i++) {
+    cues[i].end = Math.max(cues[i].start, Math.min(cues[i].end, cues[i + 1].start));
+  }
+
+  /**
+   * Time of a character position, interpolated ACROSS its cue.
+   *
+   * A sentence normally begins in the middle of a cue, so inheriting the cue's
+   * own start lit lines ~3 s early on average (p90 4.6 s). Splitting the cue's
+   * duration by how far into its text the character sits removes that.
+   */
+  const timeAt = (pos: number): number => {
+    let lo = 0;
+    let hi = cues.length - 1;
+    let idx = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (cues[mid].pos <= pos) {
+        idx = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
     }
-    return seg;
+    const c = cues[idx];
+    if (!c) return 0;
+    const frac = Math.min(1, Math.max(0, (pos - c.pos) / Math.max(1, c.len)));
+    return c.start + frac * (c.end - c.start);
   };
 
   const units: Unit[] = [];
@@ -186,16 +225,17 @@ function buildUnits(t: Transcript): Unit[] {
   while ((m = re.exec(text))) {
     const raw = m[0].trim().replace(/\s+/g, ' ');
     if (!raw) continue;
-    const startSeg = segAtPos(m.index);
-    const endSeg = segAtPos(m.index + m[0].length - 1);
-    units.push({ text: raw, time: startSeg?.start ?? 0, end: endSeg?.end ?? 0 });
+    // skip the leading whitespace the regex may have swallowed
+    const from = m.index + (m[0].length - m[0].trimStart().length);
+    units.push({ text: raw, time: timeAt(from), end: timeAt(m.index + m[0].length) });
   }
 
-  // Fallback for lyrics / unpunctuated transcripts: use caption lines.
+  // Fallback for lyrics / unpunctuated transcripts: use caption lines, still
+  // with the overlap trimmed off.
   if (units.length < Math.max(2, t.segments.length / 4)) {
     return t.segments
-      .filter((s) => s.text.trim())
-      .map((s) => ({ text: s.text.trim(), time: s.start, end: s.end }));
+      .map((s, i) => ({ text: s.text.trim(), time: s.start, end: cues[i].end }))
+      .filter((u) => u.text);
   }
   return units;
 }

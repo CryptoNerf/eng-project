@@ -111,7 +111,9 @@ export function WatchView({
           }
           return idx;
         });
-      }, 250);
+        // 120 ms, not 250: the poll interval is pure added lag on every
+        // line change, and getCurrentTime is cheap
+      }, 120);
     });
 
     return () => {
