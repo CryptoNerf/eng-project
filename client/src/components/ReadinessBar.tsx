@@ -4,6 +4,9 @@ interface Props {
   readiness: Readiness;
   /** 'full' — deck header, 'compact' — collections grid and chapters. */
   size?: 'full' | 'compact';
+  /** Measured vocabulary, shown so the user can always revisit the test. */
+  vocabulary?: number;
+  onCalibrate?: () => void;
 }
 
 /**
@@ -18,8 +21,13 @@ interface Props {
  * target, so the bar shows both where they stand and how far the next study
  * session takes them. Same two colours as the word cards.
  */
-export function ReadinessBar({ readiness, size = 'full' }: Props) {
-  const { pct, gainPct, ready, comfortable, plan, planComfort, unknownEvery } = readiness;
+export function ReadinessBar({
+  readiness,
+  size = 'full',
+  vocabulary,
+  onCalibrate,
+}: Props) {
+  const { progressPct, pct, ready, comfortable, plan, planComfort, unknownEvery } = readiness;
   const compact = size === 'compact';
   const rest = planComfort.length - plan.length;
 
@@ -30,7 +38,7 @@ export function ReadinessBar({ readiness, size = 'full' }: Props) {
           <span className="text-[11px] font-bold uppercase tracking-wide text-ink-500">
             готовность к видео
           </span>
-          <span className="text-sm font-bold text-ink-900">{pct}%</span>
+          <span className="text-sm font-bold text-ink-900">{progressPct}%</span>
         </div>
       )}
 
@@ -38,23 +46,23 @@ export function ReadinessBar({ readiness, size = 'full' }: Props) {
         title={`Знакомо ${readiness.knownUnits.toLocaleString('ru')} из ${readiness.total.toLocaleString('ru')} слов, звучащих в видео`}
         className={`flex w-full border border-ink-900 bg-white ${compact ? 'h-1.5' : 'h-2.5'}`}
       >
-        <div className="bg-[#cfe36e]" style={{ width: `${pct}%` }} />
-        {!ready && <div className="bg-[#f7dd4b]" style={{ width: `${gainPct}%` }} />}
+        <div className="bg-[#cfe36e]" style={{ width: `${progressPct}%` }} />
       </div>
 
       {compact ? (
         <p className="mt-1 text-[11px] text-ink-600">
-          <span className="font-bold">знакомо {pct}%</span>
+          <span className="font-bold">готовность {progressPct}%</span>
           {unknownEvery > 0 && ` · незнакомо каждое ${unknownEvery}-е слово`}
         </p>
       ) : (
         <>
-          {/* the percentage on its own misleads: 74% reads as «почти всё», but
-              it means three unknown words in every subtitle line */}
+          {/* the coverage percentage on its own misleads: 74% reads as «почти
+              всё», but it means three unknown words in every subtitle line */}
           <p className="mt-1 text-xs text-ink-700">
             {unknownEvery > 0 ? (
               <>
-                незнакомо каждое <b>{unknownEvery}-е</b> слово — {verdict(pct)}
+                знакомо {pct}% слов — незнакомо каждое <b>{unknownEvery}-е</b>,{' '}
+                {verdict(pct)}
               </>
             ) : (
               'вы знаете здесь каждое слово'
@@ -72,6 +80,16 @@ export function ReadinessBar({ readiness, size = 'full' }: Props) {
               и ещё {rest} {plural(rest, 'слово', 'слова', 'слов')} → каждое{' '}
               {Math.round(1 / (1 - COMFORT_TARGET))}-е, смотреть будет легко
             </p>
+          )}
+          {onCalibrate && (
+            <button
+              onClick={onCalibrate}
+              className="mt-1.5 border-b border-dashed border-ink-400 text-[11px] text-ink-500 transition hover:text-ink-900"
+            >
+              считаем по вашему словарю
+              {vocabulary ? ` ≈${vocabulary.toLocaleString('ru')} слов` : ''} — перепройти
+              тест
+            </button>
           )}
         </>
       )}

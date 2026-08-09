@@ -813,6 +813,7 @@ export default function App() {
             pct={deckPct}
             readiness={deckReadiness}
             needsLevel={knownRank === null}
+            vocabulary={profile.vocabEstimate ?? profile.knownRank}
             onCalibrate={() => setLevelTest(true)}
             showChapters={canSplitIntoChapters(deck.duration)}
             chapterCount={chapterInfo?.length || null}
@@ -928,7 +929,7 @@ export default function App() {
                 title="Проверка словарного запаса — от неё зависит «готовность к видео»"
               >
                 {knownRank !== null
-                  ? `словарь: ≈${(profile.vocabEstimate ?? knownRank).toLocaleString('ru')} слов`
+                  ? `словарь: ≈${(profile.vocabEstimate ?? knownRank).toLocaleString('ru')} слов · изменить`
                   : 'проверить словарь'}
               </button>
             </div>

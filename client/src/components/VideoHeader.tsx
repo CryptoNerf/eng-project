@@ -10,6 +10,7 @@ interface Props {
   pct: number | null; // «вы знаете X%» — fallback for decks built before coverage
   readiness: Readiness | null; // null until the vocabulary level is measured
   needsLevel: boolean;
+  vocabulary?: number;
   onCalibrate: () => void;
   showChapters: boolean; // long enough to be worth splitting
   chapterCount: number | null; // null until the chapters are computed
@@ -26,6 +27,7 @@ export function VideoHeader({
   pct,
   readiness,
   needsLevel,
+  vocabulary,
   onCalibrate,
   showChapters,
   chapterCount,
@@ -67,7 +69,11 @@ export function VideoHeader({
           {deck.author && <p className="mt-0.5 text-sm text-ink-500">{deck.author}</p>}
           <div className="mt-2">
             {readiness ? (
-              <ReadinessBar readiness={readiness} />
+              <ReadinessBar
+                readiness={readiness}
+                vocabulary={vocabulary}
+                onCalibrate={onCalibrate}
+              />
             ) : needsLevel ? (
               <ReadinessUnknown onCalibrate={onCalibrate} cards={cardCount} />
             ) : (

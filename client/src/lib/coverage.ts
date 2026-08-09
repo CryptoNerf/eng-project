@@ -48,6 +48,15 @@ export interface Coverage {
 }
 
 export interface Readiness {
+  /**
+   * 0..100 progress towards «можно смотреть» — what the bar shows.
+   *
+   * NOT the coverage percentage. Coverage has no zero: any video starts around
+   * 70-80% for any learner, because that is how English distributes, so a bar
+   * filled to 74% told a beginner they were nearly there. This one starts empty
+   * and fills as the words that actually block the video get learned.
+   */
+  progressPct: number;
   pct: number; // 0..100 of the spoken words the user knows
   /** One unknown word every N — the number people can actually picture. */
   unknownEvery: number;
@@ -121,13 +130,17 @@ export function readinessOf(
   if (!cov) return null;
 
   let known = cov.base;
+  // words earned ABOVE the user's baseline — the work that moved this video
+  let earned = 0;
   const rest: { id: string; n: number }[] = [];
   cov.ids.forEach((id, i) => {
     const n = cov.counts[i];
     const state = words.get(id);
     if (state) {
-      if (isMastered(state)) known += n;
-      else rest.push({ id, n });
+      if (isMastered(state)) {
+        known += n;
+        if (rankOf(id) >= knownRank) earned += n;
+      } else rest.push({ id, n });
       return;
     }
     if (rankOf(id) < knownRank) known += n;
@@ -153,12 +166,21 @@ export function readinessOf(
 
   const unknown = Math.max(0, cov.total - known);
 
+  const ready = known >= needReady;
+
   return {
+    // distance actually travelled towards «можно смотреть»: everything already
+    // earned, against everything still in the way
+    progressPct: ready
+      ? 100
+      : earned + gained > 0
+        ? Math.floor((earned / (earned + gained)) * 100)
+        : 0,
     // floor, not round: «знакомо 90%» must never appear while the bar still
     // asks for more words
     pct: Math.floor((known / cov.total) * 100),
     unknownEvery: unknown > 0 ? Math.round(cov.total / unknown) : 0,
-    ready: known >= needReady,
+    ready,
     comfortable: known >= needComfort,
     plan: planComfort.slice(0, readyCount),
     planComfort,
