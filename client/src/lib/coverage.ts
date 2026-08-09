@@ -26,7 +26,11 @@ export const COVERAGE_V = 2;
  */
 export const READY_TARGET = 0.9;
 
-/** Vocabulary frontier assumed before the user takes the test. */
+/**
+ * Fallback frontier. Only ever used once a level HAS been measured but the
+ * stored value is missing — readiness is not shown at all before the test,
+ * because any fixed assumption produces the same ~75% on every video.
+ */
 export const DEFAULT_KNOWN_RANK = 1000;
 
 /** Coverage data in working form. */
@@ -43,7 +47,8 @@ export interface Readiness {
   ready: boolean; // target reached — time to watch
   plan: string[]; // words that get there, biggest win first
   gainPct: number; // points the plan adds
-  measured: boolean; // false while the vocabulary level is still a guess
+  knownUnits: number; // familiar words spoken — the numerator, shown as-is
+  total: number; // words spoken in the video — the denominator
 }
 
 /** Working-form coverage straight from an open deck. */
@@ -101,8 +106,7 @@ export function decodeCoverage(meta: DeckMeta | undefined): Coverage | null {
 export function readinessOf(
   cov: Coverage | null,
   words: WordsMap,
-  knownRank = DEFAULT_KNOWN_RANK,
-  measured = false,
+  knownRank: number,
   target = READY_TARGET,
 ): Readiness | null {
   if (!cov) return null;
@@ -138,6 +142,7 @@ export function readinessOf(
     ready: needed <= 0,
     plan,
     gainPct: Math.round((gained / cov.total) * 100),
-    measured,
+    knownUnits: Math.round(known),
+    total: cov.total,
   };
 }

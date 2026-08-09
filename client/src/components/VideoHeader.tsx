@@ -2,13 +2,14 @@ import type { Readiness } from '../lib/coverage';
 import type { Deck } from '../lib/types';
 import { formatTime } from '../lib/words';
 import { BrainIcon, LinkIcon, PlayIcon, PlusIcon } from './Icons';
-import { ReadinessBar } from './ReadinessBar';
+import { ReadinessBar, ReadinessUnknown } from './ReadinessBar';
 
 interface Props {
   deck: Deck;
   cardCount: number;
   pct: number | null; // «вы знаете X%» — fallback for decks built before coverage
-  readiness: Readiness | null;
+  readiness: Readiness | null; // null until the vocabulary level is measured
+  needsLevel: boolean;
   onCalibrate: () => void;
   showChapters: boolean; // long enough to be worth splitting
   chapterCount: number | null; // null until the chapters are computed
@@ -24,6 +25,7 @@ export function VideoHeader({
   cardCount,
   pct,
   readiness,
+  needsLevel,
   onCalibrate,
   showChapters,
   chapterCount,
@@ -63,20 +65,22 @@ export function VideoHeader({
             {deck.title}
           </h2>
           {deck.author && <p className="mt-0.5 text-sm text-ink-500">{deck.author}</p>}
-          {readiness ? (
-            <div className="mt-2">
-              <ReadinessBar readiness={readiness} onCalibrate={onCalibrate} />
-            </div>
-          ) : (
-            pct !== null && (
-              <div className="mt-2 flex items-center gap-2">
-                <div className="h-2 w-40 border border-ink-900 bg-white">
-                  <div className="h-full bg-[#cfe36e]" style={{ width: `${pct}%` }} />
+          <div className="mt-2">
+            {readiness ? (
+              <ReadinessBar readiness={readiness} />
+            ) : needsLevel ? (
+              <ReadinessUnknown onCalibrate={onCalibrate} cards={cardCount} />
+            ) : (
+              pct !== null && (
+                <div className="flex items-center gap-2">
+                  <div className="h-2 w-40 border border-ink-900 bg-white">
+                    <div className="h-full bg-[#cfe36e]" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="text-xs font-bold text-ink-700">вы знаете {pct}%</span>
                 </div>
-                <span className="text-xs font-bold text-ink-700">вы знаете {pct}%</span>
-              </div>
-            )
-          )}
+              )
+            )}
+          </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {readiness && !readiness.ready && (
               <button

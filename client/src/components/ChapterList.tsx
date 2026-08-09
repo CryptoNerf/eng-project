@@ -1,6 +1,6 @@
 import type { ChapterInfo } from '../lib/chapters';
 import { readinessOf } from '../lib/coverage';
-import type { WordsMap } from '../lib/vocab';
+import { isMastered, type WordsMap } from '../lib/vocab';
 import { formatTime } from '../lib/words';
 import { PlayIcon } from './Icons';
 import { ReadinessBar } from './ReadinessBar';
@@ -8,9 +8,9 @@ import { ReadinessBar } from './ReadinessBar';
 interface Props {
   chapters: ChapterInfo[] | null; // null while the transcript loads
   words: WordsMap;
-  knownRank: number;
-  measured: boolean;
+  knownRank: number | null; // null while the level is unknown
   onStudy: (ids: string[]) => void;
+  onCalibrate: () => void;
   onWatch: (start: number) => void;
 }
 
@@ -25,9 +25,9 @@ export function ChapterList({
   chapters,
   words,
   knownRank,
-  measured,
   onStudy,
   onWatch,
+  onCalibrate,
 }: Props) {
   if (chapters === null) {
     return (
@@ -47,9 +47,9 @@ export function ChapterList({
     );
   }
 
-  const done = chapters.filter(
-    (c) => readinessOf(c.coverage, words, knownRank, measured)?.ready,
-  ).length;
+  const readinessFor = (c: ChapterInfo) =>
+    knownRank === null ? null : readinessOf(c.coverage, words, knownRank);
+  const done = chapters.filter((c) => readinessFor(c)?.ready).length;
 
   return (
     <div className="mx-auto mb-6 max-w-6xl border border-ink-900 bg-white p-3 sm:p-4">
@@ -57,14 +57,28 @@ export function ChapterList({
         <h3 className="text-sm font-bold uppercase tracking-wide text-ink-500">
           по главам
         </h3>
-        <p className="text-xs text-ink-500">
-          готово {done} из {chapters.length} · учите по одной — и сразу смотрите эту часть
-        </p>
+        {knownRank === null ? (
+          <button
+            onClick={onCalibrate}
+            className="border-b border-dashed border-ink-400 text-xs text-ink-500 transition hover:text-ink-900"
+          >
+            проверьте словарь — тогда у каждой главы появится своя готовность
+          </button>
+        ) : (
+          <p className="text-xs text-ink-500">
+            готово {done} из {chapters.length} · учите по одной — и сразу смотрите эту часть
+          </p>
+        )}
       </div>
 
       <ul className="flex flex-col gap-2">
         {chapters.map((info) => {
-          const r = readinessOf(info.coverage, words, knownRank, measured);
+          const r = readinessFor(info);
+          // without a measured level there is no plan — offer the chapter's own
+          // words instead, most frequent first
+          const todo = r
+            ? r.plan
+            : info.coverage.ids.filter((id) => !isMastered(words.get(id)));
           const mins = Math.max(1, Math.round((info.chapter.end - info.chapter.start) / 60));
           return (
             <li
@@ -85,17 +99,35 @@ export function ChapterList({
 
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
                 <div className="min-w-[10rem] flex-1">
-                  {r && <ReadinessBar readiness={r} size="compact" />}
+                  {r ? (
+                    <ReadinessBar readiness={r} size="compact" />
+                  ) : (
+                    <span className="text-[11px] text-ink-500">
+                      {todo.length} {plural(todo.length, 'новое слово', 'новых слова', 'новых слов')}
+                    </span>
+                  )}
                 </div>
                 <div className="flex shrink-0 gap-1.5">
-                  {r && !r.ready && (
-                    <button
-                      onClick={() => onStudy(r.plan)}
-                      className="border border-ink-900 bg-[#f7dd4b] px-2 py-1 text-xs font-bold text-ink-900 transition hover:opacity-90"
-                      title={`+${r.gainPct}% понимания этой главы`}
-                    >
-                      учить {r.plan.length}
-                    </button>
+                  {r ? (
+                    !r.ready && (
+                      <button
+                        onClick={() => onStudy(r.plan)}
+                        className="border border-ink-900 bg-[#f7dd4b] px-2 py-1 text-xs font-bold text-ink-900 transition hover:opacity-90"
+                        title={`+${r.gainPct}% понимания этой главы`}
+                      >
+                        учить {r.plan.length}
+                      </button>
+                    )
+                  ) : (
+                    todo.length > 0 && (
+                      <button
+                        onClick={() => onStudy(todo)}
+                        className="border border-ink-900 bg-[#f7dd4b] px-2 py-1 text-xs font-bold text-ink-900 transition hover:opacity-90"
+                        title="Слова этой главы, самые частые первыми"
+                      >
+                        учить
+                      </button>
+                    )
                   )}
                   <button
                     onClick={() => onWatch(info.chapter.start)}
@@ -117,4 +149,12 @@ export function ChapterList({
       </ul>
     </div>
   );
+}
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
 }

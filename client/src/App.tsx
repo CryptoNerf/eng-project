@@ -229,7 +229,7 @@ export default function App() {
             const p = await repo.loadProfile();
             if (!cancelled) setProfile(p);
           } catch {
-            /* an unmeasured level still works, it is just labelled «≈» */
+            /* no level yet just means readiness stays hidden */
           }
         })(),
       ]);
@@ -534,20 +534,21 @@ export default function App() {
     [deck, words],
   );
 
-  const knownRank = profile.knownRank ?? DEFAULT_KNOWN_RANK;
-  const measured = !!profile.calibratedAt;
+  // Null until the user's vocabulary is measured. Readiness is deliberately
+  // NOT shown before that: any fixed assumption puts every video at ~75%,
+  // which describes English rather than the learner.
+  const knownRank = profile.calibratedAt
+    ? profile.knownRank ?? DEFAULT_KNOWN_RANK
+    : null;
 
   // «готовность к видео»: share of the SPOKEN words the user understands.
-  // Null for decks built before coverage — they get it when rebuilt on open.
+  // Also null for decks built before coverage — they get it when rebuilt.
   const deckReadiness = useMemo(
     () =>
-      readinessOf(
-        coverageFromCards(deck?.cards || [], deck?.totalWords),
-        words,
-        knownRank,
-        measured,
-      ),
-    [deck, words, knownRank, measured],
+      knownRank === null
+        ? null
+        : readinessOf(coverageFromCards(deck?.cards || [], deck?.totalWords), words, knownRank),
+    [deck, words, knownRank],
   );
 
   /** Store the measured vocabulary size and recompute every readiness with it. */
@@ -811,6 +812,7 @@ export default function App() {
             cardCount={deck.cards.length}
             pct={deckPct}
             readiness={deckReadiness}
+            needsLevel={knownRank === null}
             onCalibrate={() => setLevelTest(true)}
             showChapters={canSplitIntoChapters(deck.duration)}
             chapterCount={chapterInfo?.length || null}
@@ -825,8 +827,8 @@ export default function App() {
               chapters={chapterInfo}
               words={words}
               knownRank={knownRank}
-              measured={measured}
               onStudy={startPlanStudy}
+              onCalibrate={() => setLevelTest(true)}
               onWatch={(start) => openWatch(start)}
             />
           )}
@@ -919,13 +921,13 @@ export default function App() {
               <button
                 onClick={() => setLevelTest(true)}
                 className={`border px-3 py-1.5 transition hover:bg-ink-100 ${
-                  measured
+                  knownRank !== null
                     ? 'border-ink-900 bg-white font-bold text-ink-900'
                     : 'border-dashed border-ink-400 text-ink-500'
                 }`}
                 title="Проверка словарного запаса — от неё зависит «готовность к видео»"
               >
-                {measured
+                {knownRank !== null
                   ? `словарь: ≈${(profile.vocabEstimate ?? knownRank).toLocaleString('ru')} слов`
                   : 'проверить словарь'}
               </button>
@@ -959,7 +961,6 @@ export default function App() {
             decks={decks}
             words={words}
             knownRank={knownRank}
-            measured={measured}
             loading={decksLoading}
             onOpen={openDeck}
             onDelete={removeDeck}

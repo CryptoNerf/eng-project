@@ -9,8 +9,7 @@ import { ReadinessBar } from './ReadinessBar';
 interface Props {
   decks: DeckMeta[];
   words: WordsMap;
-  knownRank: number;
-  measured: boolean;
+  knownRank: number | null; // null while the level is unknown
   loading?: boolean;
   onOpen: (deck: DeckMeta) => void;
   onDelete: (videoId: string) => void;
@@ -20,7 +19,6 @@ export function DeckList({
   decks,
   words,
   knownRank,
-  measured,
   loading,
   onOpen,
   onDelete,
@@ -51,7 +49,8 @@ export function DeckList({
           // «понятно X%» beats «знаете X%»: it answers whether this video is
           // watchable today. Decks built before coverage fall back to the old
           // number until they are opened and rebuilt.
-          const readiness = readinessOf(decodeCoverage(d), words, knownRank, measured);
+          const readiness =
+            knownRank === null ? null : readinessOf(decodeCoverage(d), words, knownRank);
           const pct = readiness ? null : pctMastered(d.wordIds, words);
           return (
           <div

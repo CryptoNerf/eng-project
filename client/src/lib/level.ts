@@ -11,21 +11,25 @@
 import { STOPWORDS } from './stopwords';
 import { lemmaOf, VOCAB_SIZE, wordAtRank } from './words';
 
-/** Frequency bands to probe, [from, to). Widths are the extrapolation weights. */
-const BANDS: [number, number][] = [
-  [0, 500],
-  [500, 1000],
-  [1000, 1500],
-  [1500, 2000],
-  [2000, 3000],
-  [3000, 4000],
-  [4000, 6000],
-  [6000, 8000],
-  [8000, 10000],
+/**
+ * Frequency bands to probe: [from, to, probes). A band's width is its weight in
+ * the final estimate, so the wide ones at the top get an extra question — there
+ * a single lucky or unlucky answer would otherwise swing the result by 2000
+ * words.
+ */
+const BANDS: [number, number, number][] = [
+  [0, 500, 2],
+  [500, 1000, 2],
+  [1000, 1500, 2],
+  [1500, 2000, 2],
+  [2000, 3000, 2],
+  [3000, 4000, 2],
+  [4000, 6000, 3],
+  [6000, 8000, 3],
+  [8000, 10000, 3],
 ];
 
-const PER_BAND = 2;
-export const TEST_LENGTH = BANDS.length * PER_BAND;
+export const TEST_LENGTH = BANDS.reduce((n, b) => n + b[2], 0);
 const OPTIONS = 4;
 
 export interface TestItem {
@@ -44,9 +48,9 @@ export function pickTestWords(exclude: Set<string> = new Set()): {
   const probes: { word: string; rank: number; band: number }[] = [];
   const used = new Set<string>();
 
-  BANDS.forEach(([from, to], band) => {
+  BANDS.forEach(([from, to, want], band) => {
     let picked = 0;
-    for (let guard = 0; guard < 200 && picked < PER_BAND; guard++) {
+    for (let guard = 0; guard < 300 && picked < want; guard++) {
       const rank = from + Math.floor(Math.random() * (Math.min(to, VOCAB_SIZE) - from));
       const word = wordAtRank(rank);
       if (!word || used.has(word) || exclude.has(word) || !testable(word)) continue;
