@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Card, Segment } from '../lib/types';
-import { annotateLine, buildLines, formatTime, type Line } from '../lib/words';
+import {
+  annotateLine,
+  buildLines,
+  formatTime,
+  transcriptVocab,
+  type Line,
+} from '../lib/words';
 import { isMastered, type WordsMap } from '../lib/vocab';
 import { translateBatch, translateWords } from '../lib/translate';
 import { loadYouTubeApi, type YTPlayer } from '../lib/youtube';
@@ -13,6 +19,7 @@ interface Props {
   segments: Segment[];
   cards: Card[];
   words: WordsMap;
+  startAt?: number; // seconds — opening a chapter starts there
   onKnown: (key: string, translation: string) => void;
   onRelearn: (key: string) => void;
   onClose: (seen: string[]) => void;
@@ -36,6 +43,7 @@ export function WatchView({
   segments,
   cards,
   words,
+  startAt,
   onKnown,
   onRelearn,
   onClose,
@@ -53,6 +61,9 @@ export function WatchView({
   const ruPending = useRef<Set<number>>(new Set());
 
   const cardByKey = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
+  // the deck lemmatized with the video's own vocabulary — tag words the same
+  // way here, or tapped words wouldn't find their cards
+  const vocab = useMemo(() => transcriptVocab(segments), [segments]);
   // cues are cut by display timing; regroup them into whole sentences
   const lines = useMemo<Line[]>(() => buildLines(segments), [segments]);
   const linesRef = useRef<Line[]>(lines);
@@ -69,7 +80,12 @@ export function WatchView({
         videoId,
         width: '100%',
         height: '100%',
-        playerVars: { playsinline: 1, rel: 0, modestbranding: 1 },
+        playerVars: {
+          playsinline: 1,
+          rel: 0,
+          modestbranding: 1,
+          ...(startAt ? { start: Math.floor(startAt) } : {}),
+        },
         events: { onReady: () => setReady(true) },
       });
 
@@ -120,7 +136,7 @@ export function WatchView({
   /** Remember which studied words actually showed up on screen. */
   function markSeen(line: Line) {
     if (!line) return;
-    for (const part of annotateLine(line.text)) {
+    for (const part of annotateLine(line.text, vocab)) {
       if (part.key && cardByKey.has(part.key)) seenRef.current.add(part.key);
     }
   }
@@ -299,7 +315,7 @@ export function WatchView({
             }`}
           >
             <span className="mr-2 text-[10px] text-ink-300">{formatTime(seg.start)}</span>
-            {annotateLine(seg.text).map((part, j) => {
+            {annotateLine(seg.text, vocab).map((part, j) => {
               if (!part.key) return <span key={j}>{part.text}</span>;
               const card = cardByKey.get(part.key);
               const state = words.get(part.key);

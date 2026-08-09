@@ -6,7 +6,7 @@ import type { Card, Difficulty, Example, Transcript } from './types';
 
 const RANK = new Map<string, number>(COMMON_WORDS.map((w, i) => [w, i]));
 
-const EASY_MAX = 1000; // rank < this  -> easy
+export const EASY_MAX = 1000; // rank < this  -> easy
 const MEDIUM_MAX = 3000; // rank < this -> medium, otherwise hard/rare
 
 // Sentinel rank for words outside the frequency list. A finite number
@@ -15,7 +15,7 @@ export const UNRANKED = 100000;
 
 // Bump when the card-building pipeline changes meaningfully — decks built
 // with an older version are rebuilt from the cached transcript on open.
-export const CARDS_VERSION = 3;
+export const CARDS_VERSION = 4;
 
 const MAX_EXAMPLES = 5;
 
@@ -65,17 +65,35 @@ function suffixCandidates(w: string): string[] {
 /**
  * Canonical form for grouping: ran/running/runs → run. Irregular forms come
  * from a lookup table; regular suffixes are stripped only when the resulting
- * base is a known common word (validation keeps rare words untouched).
+ * base is a known word (validation keeps rare words untouched).
+ *
+ * `local` is the set of words the video itself uses. It rescues terminology
+ * the frequency list has never heard of: "neurons" only collapses into
+ * "neuron" because the video says "neuron" elsewhere. Callers that must
+ * produce the SAME keys as the deck (watch mode) have to pass the same set.
  */
-export function lemmaOf(word: string): string {
+export function lemmaOf(word: string, local?: ReadonlySet<string>): string {
   const w = word.replace(/'/g, '');
   const irr = IRREGULAR[w];
   if (irr) return irr;
   if (NO_LEMMA.has(w)) return word;
   for (const cand of suffixCandidates(w)) {
-    if (RANK.has(cand) && !STOPWORDS.has(cand)) return cand;
+    if (STOPWORDS.has(cand)) continue;
+    if (RANK.has(cand) || local?.has(cand)) return cand;
   }
   return word;
+}
+
+/** Every real word the video says — evidence for the lemma guesses above. */
+export function transcriptVocab(segments: Transcript['segments']): Set<string> {
+  const out = new Set<string>();
+  for (const s of segments) {
+    for (const raw of s.text.split(/\s+/)) {
+      const w = normalizeWord(raw);
+      if (w) out.add(w);
+    }
+  }
+  return out;
 }
 
 /** Frequency rank of a word (after lemmatization). */
@@ -108,10 +126,15 @@ export function normalizeWord(raw: string): string | null {
  * matched by lemma ("figured out" → "figure out"); the rest must match
  * literally, since they're function words that never inflect.
  */
-function matchPhraseAt(tokens: string[], i: number): string[] | null {
+function matchPhraseAt(
+  tokens: string[],
+  i: number,
+  local?: ReadonlySet<string>,
+): string[] | null {
   const first = tokens[i];
   if (!first) return null;
-  const keys = first === lemmaOf(first) ? [first] : [first, lemmaOf(first)];
+  const lemma = lemmaOf(first, local);
+  const keys = first === lemma ? [first] : [first, lemma];
   for (const key of keys) {
     const candidates = PHRASE_INDEX.get(key);
     if (!candidates) continue;
@@ -191,6 +214,7 @@ interface Acc {
 /** Build vocabulary cards (no translations yet) from a transcript. */
 export function buildCards(t: Transcript): Card[] {
   const units = buildUnits(t);
+  const local = transcriptVocab(t.segments);
   const map = new Map<string, Acc>();
 
   for (const unit of units) {
@@ -202,7 +226,7 @@ export function buildCards(t: Transcript): Card[] {
       if (!tokens[i]) continue;
 
       // Multi-word units win over their parts: "kind of" is not "kind".
-      const phrase = matchPhraseAt(tokens, i);
+      const phrase = matchPhraseAt(tokens, i, local);
       if (phrase) {
         const key = phrase.join(' ');
         const surface = tokens.slice(i, i + phrase.length).join(' ');
@@ -228,7 +252,7 @@ export function buildCards(t: Transcript): Card[] {
       const w = normalizeWord(raw[i]);
       if (!w) continue;
       if (STOPWORDS.has(w.replace(/'/g, ''))) continue;
-      const lemma = lemmaOf(w);
+      const lemma = lemmaOf(w, local);
       if (STOPWORDS.has(lemma.replace(/'/g, ''))) continue;
       keysInUnit.add(lemma);
       let acc = map.get(lemma);
@@ -282,6 +306,38 @@ export function buildCards(t: Transcript): Card[] {
   return cards;
 }
 
+/**
+ * How many word units the video speaks — the denominator behind «готовность».
+ * Counted over the same sentence units and with the same phrase-swallowing as
+ * card building, so a card's `count` is directly comparable to this total.
+ */
+export function countUnits(t: Transcript): number {
+  return countUnitsOfLines(buildUnits(t), transcriptVocab(t.segments)).total;
+}
+
+/**
+ * Tally word units across already-cut lines: how many are spoken in total, and
+ * how often each of `keys` occurs. Chapters use this to score a slice of the
+ * video against the deck the whole video produced.
+ */
+export function countUnitsOfLines(
+  lines: { text: string }[],
+  local: ReadonlySet<string>,
+  keys?: ReadonlySet<string>,
+): { total: number; counts: Map<string, number> } {
+  let total = 0;
+  const counts = new Map<string, number>();
+  for (const line of lines) {
+    for (const tok of annotateLine(line.text, local)) {
+      if (!tok.key) continue;
+      total++;
+      if (keys && !keys.has(tok.key)) continue;
+      counts.set(tok.key, (counts.get(tok.key) || 0) + 1);
+    }
+  }
+  return { total, counts };
+}
+
 /** A phrase is as rare as its rarest content word (1-letter words aren't ranked). */
 function rankForPhrase(phrase: string): number {
   let worst = 0;
@@ -302,6 +358,7 @@ function rankForPhrase(phrase: string): number {
  */
 export function annotateLine(
   line: string,
+  local?: ReadonlySet<string>,
 ): { text: string; key: string | null }[] {
   const raw = line.split(/(\s+)/); // keep whitespace so the line renders intact
   const words = raw.filter((_, i) => i % 2 === 0);
@@ -310,7 +367,7 @@ export function annotateLine(
 
   const out: { text: string; key: string | null }[] = [];
   for (let i = 0; i < words.length; i++) {
-    const phrase = matchPhraseAt(tokens, i);
+    const phrase = matchPhraseAt(tokens, i, local);
     if (phrase) {
       const end = i + phrase.length - 1;
       const text = words
@@ -323,7 +380,7 @@ export function annotateLine(
       continue;
     }
     const t = tokens[i];
-    const key = t.length >= 2 && /[a-z]/.test(t) ? lemmaOf(t) : null;
+    const key = t.length >= 2 && /[a-z]/.test(t) ? lemmaOf(t, local) : null;
     out.push({ text: words[i], key });
     if (gaps[i]) out.push({ text: gaps[i], key: null });
   }

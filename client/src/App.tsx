@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import { fetchTranscript, translateBatch, warmupIngest, ApiError } from './lib/api';
 import { translateWords } from './lib/translate';
-import { buildCards, exampleEnd, CARDS_VERSION, UNRANKED } from './lib/words';
+import { buildCards, countUnits, exampleEnd, CARDS_VERSION, UNRANKED } from './lib/words';
 import { initialSrs, isDue, isLearnedSrs, review } from './lib/srs';
 import { auth } from './lib/firebase';
 import { watchUser, completeEmailLink, pendingEmailLink } from './lib/auth';
@@ -25,9 +25,17 @@ import {
   reviewsToday,
   type WordsMap,
 } from './lib/vocab';
+import { coverageFromCards, readinessOf } from './lib/coverage';
+import {
+  analyzeChapters,
+  canSplitIntoChapters,
+  resolveChapters,
+  type ChapterInfo,
+} from './lib/chapters';
 import { toAnkiTsv, toCsv, download } from './lib/anki';
 import type {
   Card,
+  Chapter,
   Deck,
   DeckMeta,
   Difficulty,
@@ -49,6 +57,7 @@ import { LoginModal } from './components/LoginModal';
 import { ClipPlayer, type Clip } from './components/ClipPlayer';
 import { WatchView } from './components/WatchView';
 import { WatchSummary } from './components/WatchSummary';
+import { ChapterList } from './components/ChapterList';
 import { BrainIcon } from './components/Icons';
 
 const DEFAULT_FILTER: Difficulty[] = ['medium', 'hard'];
@@ -81,9 +90,12 @@ export default function App() {
   const [showLogin, setShowLogin] = useState(false);
   const [clip, setClip] = useState<Clip | null>(null);
   // watch mode: the payoff step — rewatch the video with interactive subtitles
-  const [watch, setWatch] = useState<{ segments: Segment[] } | null>(null);
+  const [watch, setWatch] = useState<{ segments: Segment[]; startAt?: number } | null>(null);
   const [watchSummary, setWatchSummary] = useState<string[] | null>(null);
-  const segmentsCache = useRef(new Map<string, Segment[]>());
+  const segmentsCache = useRef(new Map<string, { segments: Segment[]; chapters: Chapter[] }>());
+  // chapters are computed from the transcript on demand, not stored in the deck
+  const [chaptersOpen, setChaptersOpen] = useState(false);
+  const [chapterInfo, setChapterInfo] = useState<ChapterInfo[] | null>(null);
   // Mounting 300+ flip-cards at once janks phones for seconds — render the
   // grid incrementally instead.
   const [renderCount, setRenderCount] = useState(48);
@@ -134,6 +146,12 @@ export default function App() {
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 500);
     return () => clearInterval(t);
   }, [busyKind]);
+
+  // chapters describe one video — drop them when the deck changes
+  useEffect(() => {
+    setChaptersOpen(false);
+    setChapterInfo(null);
+  }, [deck?.videoId]);
 
   // reset the incremental grid whenever the visible set changes
   useEffect(() => {
@@ -257,10 +275,15 @@ export default function App() {
         duration: t.duration,
         createdAt: existing?.createdAt ?? Date.now(),
         builderVersion: CARDS_VERSION,
+        totalWords: countUnits(t), // denominator for «готовность»
         cards,
         srs: {},
       };
 
+      segmentsCache.current.set(t.videoId, {
+        segments: t.segments,
+        chapters: t.chapters || [],
+      });
       deckCache.current.set(newDeck.videoId, newDeck);
       setDeck(newDeck);
       setShowDict(false);
@@ -423,27 +446,59 @@ export default function App() {
     track('word_relearn');
   }
 
-  /** Open watch mode; subtitles come from the global transcript cache. */
-  async function openWatch() {
-    if (!deck) return;
-    const cached = segmentsCache.current.get(deck.videoId);
-    if (cached) {
-      setWatch({ segments: cached });
-      track('watch_started', { video_id: deck.videoId });
-      return;
+  /**
+   * Subtitles + chapters for a video, from the global transcript cache.
+   * Watch mode and the chapter panel share one fetch per session.
+   */
+  async function ensureTranscript(videoId: string, overlay = true) {
+    const cached = segmentsCache.current.get(videoId);
+    if (cached) return cached;
+    if (overlay) {
+      setLoading(true);
+      setBusyKind('open');
     }
-    setLoading(true);
-    setBusyKind('open');
     try {
-      const t = await fetchTranscript(deck.videoId);
-      segmentsCache.current.set(deck.videoId, t.segments);
-      setWatch({ segments: t.segments });
-      track('watch_started', { video_id: deck.videoId });
+      const t = await fetchTranscript(videoId);
+      const data = { segments: t.segments, chapters: t.chapters || [] };
+      segmentsCache.current.set(videoId, data);
+      return data;
+    } finally {
+      if (overlay) {
+        setLoading(false);
+        setBusyKind(null);
+      }
+    }
+  }
+
+  /** Open watch mode, optionally starting at a chapter. */
+  async function openWatch(startAt?: number) {
+    if (!deck) return;
+    try {
+      const { segments } = await ensureTranscript(deck.videoId);
+      setWatch({ segments, startAt });
+      track('watch_started', { video_id: deck.videoId, from_chapter: startAt != null });
     } catch {
       setError('Не удалось загрузить субтитры для просмотра.');
-    } finally {
-      setLoading(false);
-      setBusyKind(null);
+    }
+  }
+
+  /** Show the video split into parts, each with its own readiness. */
+  async function toggleChapters() {
+    if (!deck) return;
+    if (chaptersOpen) {
+      setChaptersOpen(false);
+      return;
+    }
+    setChaptersOpen(true);
+    if (chapterInfo) return; // already computed for this deck
+    try {
+      const { segments, chapters } = await ensureTranscript(deck.videoId, false);
+      const resolved = resolveChapters(chapters, segments, deck.duration);
+      setChapterInfo(analyzeChapters(segments, resolved, deck.cards));
+      track('chapters_opened', { video_id: deck.videoId, chapters: resolved.length });
+    } catch {
+      setChapterInfo([]);
+      setError('Не удалось загрузить субтитры для разбивки на главы.');
     }
   }
 
@@ -463,6 +518,13 @@ export default function App() {
 
   const deckPct = useMemo(
     () => (deck ? pctMastered(deck.cards.map((c) => c.id), words) : null),
+    [deck, words],
+  );
+
+  // «готовность к видео»: share of the SPOKEN words the user understands.
+  // Null for decks built before coverage — they get it when rebuilt on open.
+  const deckReadiness = useMemo(
+    () => readinessOf(coverageFromCards(deck?.cards || [], deck?.totalWords), words),
     [deck, words],
   );
 
@@ -531,6 +593,25 @@ export default function App() {
     await Promise.all(pool.filter((c) => !c.examples[0]?.ru).map(translateExamples));
     setTranslating(false);
     track('study_started', { cards: pool.length });
+    setStudyCards(pool.map((c) => ({ ...c, videoId: deck.videoId })));
+  }
+
+  /**
+   * Study exactly the words that buy the most understanding — the plan behind
+   * «до 90%». Order is preserved: the most frequent word comes first.
+   */
+  async function startPlanStudy(ids: string[]) {
+    if (!deck || ids.length === 0) return;
+    const byId = new Map(deck.cards.map((c) => [c.id, c]));
+    const pool = ids
+      .map((id) => byId.get(id))
+      .filter((c): c is Card => !!c && !isKnown(words.get(c.id)))
+      .slice(0, STUDY_SESSION_MAX);
+    if (pool.length === 0) return;
+    setTranslating(true);
+    await Promise.all(pool.filter((c) => !c.examples[0]?.ru).map(translateExamples));
+    setTranslating(false);
+    track('study_started', { cards: pool.length, mode: 'plan' });
     setStudyCards(pool.map((c) => ({ ...c, videoId: deck.videoId })));
   }
 
@@ -694,9 +775,23 @@ export default function App() {
             deck={deck}
             cardCount={deck.cards.length}
             pct={deckPct}
+            readiness={deckReadiness}
+            showChapters={canSplitIntoChapters(deck.duration)}
+            chapterCount={chapterInfo?.length || null}
+            chaptersOpen={chaptersOpen}
             onNew={goHome}
-            onWatch={openWatch}
+            onWatch={() => openWatch()}
+            onStudyPlan={() => startPlanStudy(deckReadiness?.plan || [])}
+            onToggleChapters={toggleChapters}
           />
+          {chaptersOpen && (
+            <ChapterList
+              chapters={chapterInfo}
+              words={words}
+              onStudy={startPlanStudy}
+              onWatch={(start) => openWatch(start)}
+            />
+          )}
           <Toolbar
             counts={counts}
             active={active}
@@ -852,6 +947,7 @@ export default function App() {
           segments={watch.segments}
           cards={deck.cards}
           words={words}
+          startAt={watch.startAt}
           onKnown={(key, translation) => markKnownWord(key, translation, deck.videoId)}
           onRelearn={relearnWord}
           onClose={(seen) => {

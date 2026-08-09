@@ -1,8 +1,10 @@
 import type { CSSProperties } from 'react';
 import type { DeckMeta } from '../lib/types';
 import { tiltFor } from '../lib/palette';
+import { decodeCoverage, readinessOf } from '../lib/coverage';
 import { pctMastered, type WordsMap } from '../lib/vocab';
 import { BookIcon, TrashIcon } from './Icons';
+import { ReadinessBar } from './ReadinessBar';
 
 interface Props {
   decks: DeckMeta[];
@@ -36,7 +38,11 @@ export function DeckList({ decks, words, loading, onOpen, onDelete }: Props) {
       </h3>
       <div className="grid gap-3 sm:grid-cols-2">
         {decks.map((d) => {
-          const pct = pctMastered(d.wordIds, words);
+          // «понятно X%» beats «знаете X%»: it answers whether this video is
+          // watchable today. Decks built before coverage fall back to the old
+          // number until they are opened and rebuilt.
+          const readiness = readinessOf(decodeCoverage(d.coverage), words);
+          const pct = readiness ? null : pctMastered(d.wordIds, words);
           return (
           <div
             key={d.videoId}
@@ -55,13 +61,19 @@ export function DeckList({ decks, words, loading, onOpen, onDelete }: Props) {
               <p className="mt-0.5 text-xs text-ink-500">
                 {d.cardCount} слов · {d.author}
               </p>
-              {pct !== null && (
-                <div className="mt-1.5 flex items-center gap-2">
-                  <div className="h-1.5 w-24 border border-ink-900 bg-white">
-                    <div className="h-full bg-[#cfe36e]" style={{ width: `${pct}%` }} />
-                  </div>
-                  <span className="text-[11px] font-bold text-ink-600">знаете {pct}%</span>
+              {readiness ? (
+                <div className="mt-1.5">
+                  <ReadinessBar readiness={readiness} size="compact" />
                 </div>
+              ) : (
+                pct !== null && (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <div className="h-1.5 w-24 border border-ink-900 bg-white">
+                      <div className="h-full bg-[#cfe36e]" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="text-[11px] font-bold text-ink-600">знаете {pct}%</span>
+                  </div>
+                )
               )}
             </div>
             <button

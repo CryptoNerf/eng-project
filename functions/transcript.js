@@ -67,49 +67,10 @@ export async function fetchTranscript(input, opts = {}) {
 
   const dir = await mkdtemp(path.join(tmpdir(), 'molly-'));
   try {
-    const base = [
-      ...(opts.verbose ? ['-v'] : ['--quiet', '--no-warnings']),
-      '--no-playlist',
-      '--skip-download',
-      '--retries', '3', '--socket-timeout', '20',
-      '--retry-sleep', 'http:exp=1:10',
-      '--js-runtimes', 'node', // yt-dlp defaults to deno-only; the container has node
-      '--cache-dir', path.join(tmpdir(), 'yt-dlp-cache'), // FS is read-only outside /tmp
-      ...(await potArgs()),
-      ...(opts.cookiesFile ? ['--cookies', opts.cookiesFile] : []),
-      ...(opts.playerClient
-        ? ['--extractor-args', `youtube:player_client=${opts.playerClient}`]
-        : []),
-      '-o', path.join(dir, '%(id)s.%(ext)s'),
-    ];
+    const base = await baseArgs(dir, opts);
 
     /* ---------- phase 1: video info only ---------- */
-    let infoStderr = '';
-    try {
-      const r = await run([...base, '--write-info-json', `https://www.youtube.com/watch?v=${videoId}`]);
-      infoStderr = r.stderr;
-    } catch (e) {
-      const stderr = String(e.stderr || e.message || '');
-      if (/Sign in to confirm/i.test(stderr)) {
-        throw withCode(new Error('YouTube требует подтверждение (bot-check с этого IP).'), 'BOT_CHECK', e);
-      }
-      if (/Private video|members-only|This video is unavailable|Video unavailable|removed/i.test(stderr)) {
-        throw withCode(new Error('Видео недоступно (приватное, удалённое или с ограничением).'), 'NOT_FOUND', e);
-      }
-      throw withCode(new Error('Не удалось получить данные видео. Проверьте ссылку.'), 'NOT_FOUND', e);
-    }
-
-    const infoPath = path.join(dir, `${videoId}.info.json`);
-    let info;
-    try {
-      info = JSON.parse(await readFile(infoPath, 'utf8'));
-    } catch {
-      throw withCode(
-        new Error('Не удалось получить данные видео. Проверьте ссылку и попробуйте ещё раз.'),
-        'NOT_FOUND',
-        { stderr: infoStderr },
-      );
-    }
+    const { info, infoPath } = await loadInfo(dir, base, videoId);
 
     /* ---------- pick the single best English track ---------- */
     const manual = Object.keys(info.subtitles || {});
@@ -171,12 +132,105 @@ export async function fetchTranscript(input, opts = {}) {
       duration: info.duration || 0,
       language: track.code,
       auto: track.auto,
+      chapters: normalizeChapters(info),
       segments,
       text: segments.map((s) => s.text).join(' '),
     };
   } finally {
     rm(dir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * Video metadata WITHOUT subtitles. Chapters live in the same info.json the
+ * transcript fetch already downloads, so this exists only to backfill videos
+ * cached before chapters were stored. It costs one player request and — unlike
+ * a subtitle download — none of YouTube's tight per-IP timedtext quota.
+ */
+export async function fetchInfo(input, opts = {}) {
+  const videoId = parseVideoId(input);
+  if (!videoId) {
+    throw withCode(new Error('Не удалось распознать ссылку на YouTube-видео.'), 'BAD_URL');
+  }
+  const dir = await mkdtemp(path.join(tmpdir(), 'molly-'));
+  try {
+    const { info } = await loadInfo(dir, await baseArgs(dir, opts), videoId);
+    return {
+      videoId,
+      title: info.title || 'Без названия',
+      author: info.uploader || info.channel || '',
+      thumbnail: info.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      duration: info.duration || 0,
+      chapters: normalizeChapters(info),
+    };
+  } finally {
+    rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Shared yt-dlp flags for every call we make. */
+async function baseArgs(dir, opts) {
+  return [
+    ...(opts.verbose ? ['-v'] : ['--quiet', '--no-warnings']),
+    '--no-playlist',
+    '--skip-download',
+    '--retries', '3', '--socket-timeout', '20',
+    '--retry-sleep', 'http:exp=1:10',
+    '--js-runtimes', 'node', // yt-dlp defaults to deno-only; the container has node
+    '--cache-dir', path.join(tmpdir(), 'yt-dlp-cache'), // FS is read-only outside /tmp
+    ...(await potArgs()),
+    ...(opts.cookiesFile ? ['--cookies', opts.cookiesFile] : []),
+    ...(opts.playerClient
+      ? ['--extractor-args', `youtube:player_client=${opts.playerClient}`]
+      : []),
+    '-o', path.join(dir, '%(id)s.%(ext)s'),
+  ];
+}
+
+/** Download and parse info.json into `dir`; throws user-facing errors. */
+async function loadInfo(dir, base, videoId) {
+  let infoStderr = '';
+  try {
+    const r = await run([...base, '--write-info-json', `https://www.youtube.com/watch?v=${videoId}`]);
+    infoStderr = r.stderr;
+  } catch (e) {
+    const stderr = String(e.stderr || e.message || '');
+    if (/Sign in to confirm/i.test(stderr)) {
+      throw withCode(new Error('YouTube требует подтверждение (bot-check с этого IP).'), 'BOT_CHECK', e);
+    }
+    if (/Private video|members-only|This video is unavailable|Video unavailable|removed/i.test(stderr)) {
+      throw withCode(new Error('Видео недоступно (приватное, удалённое или с ограничением).'), 'NOT_FOUND', e);
+    }
+    throw withCode(new Error('Не удалось получить данные видео. Проверьте ссылку.'), 'NOT_FOUND', e);
+  }
+
+  const infoPath = path.join(dir, `${videoId}.info.json`);
+  try {
+    return { info: JSON.parse(await readFile(infoPath, 'utf8')), infoPath };
+  } catch {
+    throw withCode(
+      new Error('Не удалось получить данные видео. Проверьте ссылку и попробуйте ещё раз.'),
+      'NOT_FOUND',
+      { stderr: infoStderr },
+    );
+  }
+}
+
+/**
+ * Author-defined chapters from info.json: [{ title, start, end }] in order.
+ * Empty when the video has none — the client then splits by time instead.
+ */
+function normalizeChapters(info) {
+  const raw = Array.isArray(info?.chapters) ? info.chapters : [];
+  const out = [];
+  for (const ch of raw) {
+    const start = Number(ch?.start_time);
+    const end = Number(ch?.end_time);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    const title = String(ch?.title || '').replace(/\s+/g, ' ').trim();
+    out.push({ title: title.slice(0, 120) || `Глава ${out.length + 1}`, start, end });
+  }
+  return out.sort((a, b) => a.start - b.start);
 }
 
 function run(args) {

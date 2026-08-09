@@ -19,6 +19,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { UNRANKED } from './words';
+import { buildCoverage } from './coverage';
 import * as local from './storage';
 import type { Card, Deck, DeckMeta, Stats, WordState } from './types';
 
@@ -41,7 +42,7 @@ export interface Repo {
 const CARDS_PER_CHUNK = 150;
 
 function toMeta(d: Deck): DeckMeta {
-  return {
+  const meta: DeckMeta = {
     videoId: d.videoId,
     title: d.title,
     author: d.author,
@@ -52,6 +53,11 @@ function toMeta(d: Deck): DeckMeta {
     wordIds: d.cards.map((c) => c.id),
     builderVersion: d.builderVersion ?? 1,
   };
+  // «готовность» on the collections screen, without loading any cards.
+  // Firestore rejects undefined, so the field is added only when we have it.
+  const coverage = buildCoverage(d.cards, d.totalWords ?? 0);
+  if (coverage) meta.coverage = coverage;
+  return meta;
 }
 
 /** JSON roundtrips turn Infinity into null — repair ranks on the way in. */
@@ -94,7 +100,12 @@ export function cloudRepo(uid: string): Repo {
         ).catch(() => {});
       }
 
-      return { ...meta, cards: sanitizeCards(cards), srs: {} };
+      return {
+        ...meta,
+        totalWords: meta.coverage?.total,
+        cards: sanitizeCards(cards),
+        srs: {},
+      };
     },
 
     async saveDeckFull(deck) {

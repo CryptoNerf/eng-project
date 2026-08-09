@@ -4,6 +4,13 @@ export interface Segment {
   text: string;
 }
 
+/** A section of the video: author-defined on YouTube, or split by time. */
+export interface Chapter {
+  title: string;
+  start: number;
+  end: number;
+}
+
 export interface Transcript {
   videoId: string;
   title: string;
@@ -12,6 +19,7 @@ export interface Transcript {
   duration: number;
   language: string;
   auto: boolean;
+  chapters?: Chapter[]; // empty when the video has none
   segments: Segment[];
   text: string;
 }
@@ -90,6 +98,7 @@ export interface Deck {
   duration: number;
   createdAt: number;
   builderVersion?: number; // CARDS_VERSION the cards were built with
+  totalWords?: number; // word units spoken in the video (denominator for «готовность»)
   cards: Card[];
   srs: Record<string, SrsState>;
 }
@@ -105,4 +114,20 @@ export interface DeckMeta {
   cardCount: number;
   wordIds?: string[]; // for «вы знаете X%» without loading full cards
   builderVersion?: number; // decks below CARDS_VERSION are rebuilt on open
+  coverage?: StoredCoverage; // «готовность» without loading full cards
+}
+
+/**
+ * Compact «готовность к видео» payload kept on the deck list document.
+ *
+ * Understanding depends on how much of the SPOKEN WORDS you know, not on how
+ * many of the deck's unique words you know — a handful of frequent words buys
+ * most of the video. Counts are a comma-joined string: a 570-word deck costs
+ * ~1.5 KB that way instead of ~9 KB as a number array.
+ */
+export interface StoredCoverage {
+  total: number; // word units spoken in the video
+  base: number; // units understood before learning anything new
+  ids: string[]; // words worth learning, most frequent first
+  counts: string; // their occurrence counts, parallel to ids
 }

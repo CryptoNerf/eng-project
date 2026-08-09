@@ -6,7 +6,7 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fetchTranscript, parseVideoId } from './transcript.js';
+import { fetchInfo, fetchTranscript, parseVideoId } from './transcript.js';
 
 initializeApp();
 const db = getFirestore();
@@ -33,6 +33,13 @@ function getCookiesFile() {
 
 // Firestore fields cap at ~1 MiB; skip caching pathological transcripts.
 const MAX_CACHE_BYTES = 900_000;
+
+// Bump when the cached video document gains a field worth backfilling.
+// v2 added `chapters`.
+const VIDEO_CACHE_V = 2;
+// Videos cached before v2 get one cheap info-only fetch to pick chapters up.
+// If that fails (bot-check, network), don't retry on every open.
+const BACKFILL_RETRY_MS = 7 * 24 * 60 * 60 * 1000;
 
 const CODE_MAP = {
   BAD_URL: 'invalid-argument',
@@ -85,6 +92,7 @@ export const ingest = onCall(
         duration: d.duration,
         language: d.language,
         auto: d.auto,
+        chapters: await chaptersFor(ref, videoId, d),
         segments,
         text: segments.map((s) => s.text).join(' '),
         cached: true,
@@ -115,6 +123,8 @@ export const ingest = onCall(
           duration: t.duration,
           language: t.language,
           auto: t.auto,
+          chapters: t.chapters || [],
+          cv: VIDEO_CACHE_V,
           segmentsCount: t.segments.length,
           gz,
           createdAt: FieldValue.serverTimestamp(),
@@ -126,3 +136,27 @@ export const ingest = onCall(
     return { ...t, cached: false };
   },
 );
+
+/**
+ * Chapters for a cached video. Documents written before VIDEO_CACHE_V have
+ * none, so we backfill them with an info-only yt-dlp call — it spends a player
+ * request but not the scarce timedtext quota. Best-effort: on failure the
+ * client falls back to splitting the video by time.
+ */
+async function chaptersFor(ref, videoId, d) {
+  if (Array.isArray(d.chapters)) return d.chapters;
+  const tried = Number(d.chaptersTriedAt || 0);
+  if (Date.now() - tried < BACKFILL_RETRY_MS) return [];
+  try {
+    const info = await fetchInfo(videoId, { cookiesFile: await getCookiesFile() });
+    await ref.set(
+      { chapters: info.chapters, cv: VIDEO_CACHE_V, chaptersTriedAt: Date.now() },
+      { merge: true },
+    );
+    return info.chapters;
+  } catch (e) {
+    console.warn('[ingest] chapter backfill failed:', videoId, e.message);
+    await ref.set({ chaptersTriedAt: Date.now() }, { merge: true }).catch(() => {});
+    return [];
+  }
+}
