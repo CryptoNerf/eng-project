@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Card, Segment } from '../lib/types';
-import { annotateLine, formatTime } from '../lib/words';
+import { annotateLine, buildLines, formatTime, type Line } from '../lib/words';
 import { isMastered, type WordsMap } from '../lib/vocab';
-import { translateWords } from '../lib/translate';
+import { translateBatch, translateWords } from '../lib/translate';
 import { loadYouTubeApi, type YTPlayer } from '../lib/youtube';
 import { speak } from '../lib/tts';
 import { CheckIcon, SoundIcon, XIcon } from './Icons';
@@ -47,9 +47,16 @@ export function WatchView({
   const [current, setCurrent] = useState(-1);
   const [picked, setPicked] = useState<Picked | null>(null);
   const [pauseAtLineEnd, setPauseAtLineEnd] = useState(false);
+  const [showRu, setShowRu] = useState(true);
+  const [ru, setRu] = useState<Map<number, string>>(new Map());
   const seenRef = useRef<Set<string>>(new Set());
+  const ruPending = useRef<Set<number>>(new Set());
 
   const cardByKey = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
+  // cues are cut by display timing; regroup them into whole sentences
+  const lines = useMemo<Line[]>(() => buildLines(segments), [segments]);
+  const linesRef = useRef<Line[]>(lines);
+  linesRef.current = lines;
 
   /* ---------- player ---------- */
   useEffect(() => {
@@ -75,9 +82,9 @@ export function WatchView({
         } catch {
           return;
         }
-        const idx = findSegment(segments, t);
+        const idx = findLine(linesRef.current, t);
         setCurrent((prev) => {
-          if (idx !== prev && idx >= 0) markSeen(segments[idx]);
+          if (idx !== prev && idx >= 0) markSeen(linesRef.current[idx]);
           // pause exactly once, when the active line ends
           if (pauseAtLineEndRef.current && prev >= 0 && idx !== prev) {
             try {
@@ -111,11 +118,57 @@ export function WatchView({
   }, [pauseAtLineEnd]);
 
   /** Remember which studied words actually showed up on screen. */
-  function markSeen(seg: Segment) {
-    for (const part of annotateLine(seg.text)) {
+  function markSeen(line: Line) {
+    if (!line) return;
+    for (const part of annotateLine(line.text)) {
       if (part.key && cardByKey.has(part.key)) seenRef.current.add(part.key);
     }
   }
+
+  /* ---------- translate lines lazily, as they come into view ---------- */
+  useEffect(() => {
+    if (!showRu || !listRef.current || typeof IntersectionObserver === 'undefined') return;
+    let queue: number[] = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const flush = async () => {
+      const batch = queue.filter((i) => !ruPending.current.has(i)).slice(0, 12);
+      queue = [];
+      if (batch.length === 0) return;
+      batch.forEach((i) => ruPending.current.add(i));
+      try {
+        const translated = await translateBatch(batch.map((i) => lines[i].text));
+        setRu((prev) => {
+          const next = new Map(prev);
+          batch.forEach((i, k) => next.set(i, translated[k]));
+          return next;
+        });
+      } catch {
+        batch.forEach((i) => ruPending.current.delete(i)); // allow a retry
+      }
+    };
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          const i = Number((e.target as HTMLElement).dataset.line);
+          if (!Number.isNaN(i) && !ruPending.current.has(i)) queue.push(i);
+        }
+        if (queue.length) {
+          clearTimeout(timer);
+          timer = setTimeout(flush, 150); // group a screenful into one batch
+        }
+      },
+      { root: listRef.current, rootMargin: '200px' },
+    );
+
+    listRef.current.querySelectorAll('[data-line]').forEach((el) => io.observe(el));
+    return () => {
+      io.disconnect();
+      clearTimeout(timer);
+    };
+  }, [showRu, lines]);
 
   /* ---------- keep the active line in view ---------- */
   useEffect(() => {
@@ -133,8 +186,8 @@ export function WatchView({
   }, []);
 
   const repeatLine = useCallback(() => {
-    if (current >= 0) seek(segments[current].start);
-  }, [current, seek, segments]);
+    if (current >= 0) seek(lines[current].start);
+  }, [current, seek, lines]);
 
   async function pickWord(key: string, surface: string) {
     const card = cardByKey.get(key);
@@ -195,13 +248,13 @@ export function WatchView({
           ⟲ повторить
         </button>
         <button
-          onClick={() => current > 0 && seek(segments[current - 1].start)}
+          onClick={() => current > 0 && seek(lines[current - 1].start)}
           className="border border-ink-900 bg-white px-2 py-1 text-xs font-bold text-ink-900 transition hover:bg-ink-100"
         >
           ← строка
         </button>
         <button
-          onClick={() => current < segments.length - 1 && seek(segments[current + 1].start)}
+          onClick={() => current < lines.length - 1 && seek(lines[current + 1].start)}
           className="border border-ink-900 bg-white px-2 py-1 text-xs font-bold text-ink-900 transition hover:bg-ink-100"
         >
           строка →
@@ -216,6 +269,16 @@ export function WatchView({
         >
           пауза после фразы
         </button>
+        <button
+          onClick={() => setShowRu((v) => !v)}
+          className={`border px-2 py-1 text-xs font-bold transition ${
+            showRu
+              ? 'border-ink-900 bg-[#f7dd4b] text-ink-900'
+              : 'border-ink-300 bg-white text-ink-400 hover:border-ink-900 hover:text-ink-900'
+          }`}
+        >
+          перевод строк
+        </button>
         <span className="ml-auto text-[11px] text-ink-500">
           знакомых слов: {studiedTotal}
         </span>
@@ -224,7 +287,7 @@ export function WatchView({
 
       {/* subtitles — own scroll area (right column on wide screens) */}
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {segments.map((seg, i) => (
+        {lines.map((seg, i) => (
           <p
             key={i}
             data-line={i}
@@ -237,16 +300,19 @@ export function WatchView({
           >
             <span className="mr-2 text-[10px] text-ink-300">{formatTime(seg.start)}</span>
             {annotateLine(seg.text).map((part, j) => {
-              const card = part.key ? cardByKey.get(part.key) : undefined;
-              if (!card) return <span key={j}>{part.text}</span>;
-              const state = words.get(part.key!);
-              // three states: mastered (quiet green), actively learning
-              // (highlighted — these are the ones to catch), not started (plain)
+              if (!part.key) return <span key={j}>{part.text}</span>;
+              const card = cardByKey.get(part.key);
+              const state = words.get(part.key);
+              // four states: mastered (quiet green), actively learning
+              // (highlighted — the ones to catch), a card not started yet
+              // (faint dots), and any other word — tappable, but unmarked
               const cls = isMastered(state)
                 ? 'text-[#4c5a1e] decoration-[#cfe36e]'
                 : state
                   ? 'bg-[#f7dd4b] font-medium text-ink-900'
-                  : 'decoration-ink-300';
+                  : card
+                    ? 'decoration-ink-300'
+                    : 'decoration-transparent hover:decoration-ink-300';
               return (
                 <span
                   key={j}
@@ -260,6 +326,11 @@ export function WatchView({
                 </span>
               );
             })}
+            {showRu && ru.get(i) && (
+              <span className="mt-0.5 block text-[13px] leading-snug text-ink-400">
+                {ru.get(i)}
+              </span>
+            )}
           </p>
         ))}
         <div className="h-24" />
@@ -318,13 +389,13 @@ export function WatchView({
 }
 
 /** Index of the segment covering time t, or the last one before it. */
-function findSegment(segments: Segment[], t: number): number {
+function findLine(lines: Line[], t: number): number {
   let lo = 0;
-  let hi = segments.length - 1;
+  let hi = lines.length - 1;
   let best = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (segments[mid].start <= t) {
+    if (lines[mid].start <= t) {
       best = mid;
       lo = mid + 1;
     } else {

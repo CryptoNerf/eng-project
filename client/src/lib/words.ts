@@ -293,8 +293,12 @@ function rankForPhrase(phrase: string): number {
 }
 
 /**
- * Split a subtitle line into segments, each tagged with the card key it
- * belongs to (phrases included) — powers word highlighting in watch mode.
+ * Split a subtitle line into segments, each tagged with a lookup key.
+ *
+ * Unlike card building, this tags EVERY real word — including function words
+ * like "might" or "which" that never become cards. In watch mode the goal is
+ * understanding the line, so any word must be tappable; the caller decides
+ * which of them to highlight.
  */
 export function annotateLine(
   line: string,
@@ -318,10 +322,81 @@ export function annotateLine(
       i = end;
       continue;
     }
-    const w = normalizeWord(words[i]);
-    const lemma = w && !STOPWORDS.has(w.replace(/'/g, '')) ? lemmaOf(w) : null;
-    out.push({ text: words[i], key: lemma && !STOPWORDS.has(lemma) ? lemma : null });
+    const t = tokens[i];
+    const key = t.length >= 2 && /[a-z]/.test(t) ? lemmaOf(t) : null;
+    out.push({ text: words[i], key });
     if (gaps[i]) out.push({ text: gaps[i], key: null });
+  }
+  return out;
+}
+
+export interface Line {
+  text: string;
+  start: number;
+  end: number;
+}
+
+// Subtitle cues are cut by display timing, not by meaning. Rejoin them into
+// sentences — but cap the length so one long unpunctuated stretch doesn't
+// become a wall of text.
+const MAX_LINE_CHARS = 220;
+
+/**
+ * Group raw subtitle cues into readable lines: full sentences where the
+ * transcript is punctuated, merged cues where it isn't.
+ */
+export function buildLines(segments: Transcript['segments']): Line[] {
+  const units = buildUnits({ segments } as Transcript);
+  const out: Line[] = [];
+  for (const u of units) {
+    if (u.text.length <= MAX_LINE_CHARS) {
+      out.push({ text: u.text, start: u.time, end: u.end });
+      continue;
+    }
+    // split an over-long unit on commas/conjunctions, sharing its time span
+    const chunks = splitLong(u.text);
+    const span = (u.end - u.time) / Math.max(1, u.text.length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      const start = u.time + offset * span;
+      offset += chunk.length;
+      out.push({ text: chunk, start, end: u.time + offset * span });
+    }
+  }
+  return out;
+}
+
+/** Break a long stretch at commas, falling back to word boundaries. */
+function splitLong(text: string): string[] {
+  const parts: string[] = [];
+  let buf = '';
+  for (const piece of text.split(/(?<=,)\s+/)) {
+    if (buf && (buf + ' ' + piece).length > MAX_LINE_CHARS) {
+      parts.push(buf);
+      buf = piece;
+    } else {
+      buf = buf ? `${buf} ${piece}` : piece;
+    }
+  }
+  if (buf) parts.push(buf);
+
+  // still too long (no commas): hard-wrap on words
+  const out: string[] = [];
+  for (const p of parts) {
+    if (p.length <= MAX_LINE_CHARS) {
+      out.push(p);
+      continue;
+    }
+    let line = '';
+    for (const w of p.split(/\s+/)) {
+      if (line && (line + ' ' + w).length > MAX_LINE_CHARS) {
+        out.push(line);
+        line = w;
+      } else {
+        line = line ? `${line} ${w}` : w;
+      }
+    }
+    if (line) out.push(line);
   }
   return out;
 }
