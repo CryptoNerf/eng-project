@@ -47,7 +47,7 @@ export function Toolbar(p: Props) {
               <button
                 key={d.key}
                 onClick={() => p.onToggle(d.key)}
-                className={`inline-flex items-center gap-1 border px-1.5 py-1 text-xs font-medium transition sm:gap-1.5 sm:px-2.5 sm:py-1.5 sm:text-sm ${
+                className={`inline-flex items-center gap-1 border px-1.5 py-1 text-xs font-medium transition sm:gap-1.5 sm:px-2 sm:py-1.5 sm:text-sm ${
                   on
                     ? 'border-ink-900 bg-ink-900 text-white'
                     : 'border-ink-300 bg-white text-ink-400 hover:border-ink-900 hover:text-ink-900'
@@ -69,20 +69,20 @@ export function Toolbar(p: Props) {
         <select
           value={p.status}
           onChange={(e) => p.onStatus(e.target.value as StatusKey)}
-          className={`border px-2.5 py-2 text-sm outline-none ${
+          className={`shrink-0 border px-2 py-2 text-sm outline-none ${
             p.status === 'mastered'
               ? 'border-ink-900 bg-[#cfe36e] font-bold text-ink-900'
               : 'border-ink-900 bg-white text-ink-900'
           }`}
           title="Какие слова показывать"
         >
-          <option value="learning">в работе · {p.learningCount}</option>
-          <option value="mastered">✓ выучено · {p.masteredCount}</option>
-          <option value="all">все слова · {p.learningCount + p.masteredCount}</option>
+          <option value="learning">в работе {p.learningCount}</option>
+          <option value="mastered">выучено {p.masteredCount}</option>
+          <option value="all">все {p.learningCount + p.masteredCount}</option>
         </select>
 
         {/* Search */}
-        <div className="relative min-w-[160px] flex-1">
+        <div className="relative min-w-[110px] flex-1">
           <SearchIcon className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
           <input
             value={p.search}
@@ -96,7 +96,7 @@ export function Toolbar(p: Props) {
         <select
           value={p.sort}
           onChange={(e) => p.onSort(e.target.value as SortKey)}
-          className="border border-ink-900 bg-white px-2.5 py-2 text-sm text-ink-900 outline-none"
+          className="shrink-0 border border-ink-900 bg-white px-2 py-2 text-sm text-ink-900 outline-none"
         >
           <option value="frequency">по частоте</option>
           <option value="difficulty">по сложности</option>
@@ -109,10 +109,11 @@ export function Toolbar(p: Props) {
           <button
             onClick={() => setExportOpen((o) => !o)}
             onBlur={() => setTimeout(() => setExportOpen(false), 150)}
-            className="inline-flex items-center gap-2 border border-ink-900 bg-white px-3 py-2 text-sm font-medium text-ink-900 transition hover:bg-ink-100"
+            title="Экспорт"
+            className="inline-flex shrink-0 items-center gap-2 border border-ink-900 bg-white px-2.5 py-2 text-sm font-medium text-ink-900 transition hover:bg-ink-100"
           >
             <DownloadIcon className="h-4 w-4" />
-            экспорт
+            <span className="hidden 2xl:inline">экспорт</span>
           </button>
           {exportOpen && (
             <div className="absolute right-0 top-full z-30 mt-1 w-44 border border-ink-900 bg-white">
@@ -136,7 +137,7 @@ export function Toolbar(p: Props) {
         <button
           onClick={p.onStudy}
           disabled={p.visible === 0}
-          className="inline-flex items-center gap-2 border-2 border-ink-900 bg-[#c2401f] px-4 py-1.5 text-sm font-bold text-white transition hover:bg-[#a83519] disabled:opacity-50"
+          className="inline-flex shrink-0 items-center gap-2 border-2 border-ink-900 bg-[#c2401f] px-3 py-1.5 text-sm font-bold text-white transition hover:bg-[#a83519] disabled:opacity-50"
         >
           <BrainIcon className="h-4 w-4" />
           учить
