@@ -1,28 +1,41 @@
 import { useMemo, useState } from 'react';
 import type { DeckMeta, WordState } from '../lib/types';
 import { describeInterval } from '../lib/srs';
-import { isKnown, isLearnedAuto, type WordsMap } from '../lib/vocab';
+import { dueWords, isKnown, isLearnedAuto, type WordsMap } from '../lib/vocab';
 import { speak } from '../lib/tts';
-import { BookIcon, SearchIcon, SoundIcon } from './Icons';
+import { BookIcon, BrainIcon, SearchIcon, SoundIcon } from './Icons';
 
-type Tab = 'learning' | 'learned' | 'known';
+export type DictTab = 'due' | 'learning' | 'learned' | 'known';
 
 interface Props {
   words: WordsMap;
   decks: DeckMeta[];
+  tab: DictTab;
+  onTab: (t: DictTab) => void;
   onMarkKnown: (word: WordState) => void;
   onUnmarkKnown: (word: WordState) => void;
   onOpenVideo: (videoId: string) => void;
+  /** Start a review of the words listed under «к повторению». */
+  onReview: () => void;
 }
 
-const TABS: { key: Tab; label: string }[] = [
+const TABS: { key: DictTab; label: string }[] = [
+  { key: 'due', label: 'к повторению' },
   { key: 'learning', label: 'изучаю' },
   { key: 'learned', label: 'выучил' },
   { key: 'known', label: 'знаю' },
 ];
 
-export function Dictionary({ words, decks, onMarkKnown, onUnmarkKnown, onOpenVideo }: Props) {
-  const [tab, setTab] = useState<Tab>('learning');
+export function Dictionary({
+  words,
+  decks,
+  tab,
+  onTab,
+  onMarkKnown,
+  onUnmarkKnown,
+  onOpenVideo,
+  onReview,
+}: Props) {
   const [search, setSearch] = useState('');
 
   const titleOf = useMemo(() => {
@@ -33,6 +46,8 @@ export function Dictionary({ words, decks, onMarkKnown, onUnmarkKnown, onOpenVid
   const groups = useMemo(() => {
     const all = [...words.values()];
     return {
+      // exactly what «повторить» will show, in the order it will show them
+      due: dueWords(words),
       learning: all
         .filter((w) => !isKnown(w) && !isLearnedAuto(w))
         .sort((a, b) => a.srs.due - b.srs.due),
@@ -59,7 +74,7 @@ export function Dictionary({ words, decks, onMarkKnown, onUnmarkKnown, onOpenVid
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => onTab(t.key)}
             className={`border px-3 py-1.5 text-sm font-medium transition ${
               tab === t.key
                 ? 'border-ink-900 bg-ink-900 text-white'
@@ -80,9 +95,21 @@ export function Dictionary({ words, decks, onMarkKnown, onUnmarkKnown, onOpenVid
         </div>
       </div>
 
+      {tab === 'due' && groups.due.length > 0 && (
+        <button
+          onClick={onReview}
+          className="mb-4 inline-flex items-center gap-2 border-2 border-ink-900 bg-[#f7dd4b] px-4 py-2 text-sm font-bold text-ink-900 transition hover:opacity-90"
+        >
+          <BrainIcon className="h-4 w-4" />
+          повторить {groups.due.length} {plural(groups.due.length, 'слово', 'слова', 'слов')}
+        </button>
+      )}
+
       {list.length === 0 ? (
         <p className="border border-dashed border-ink-300 bg-white px-4 py-10 text-center text-sm text-ink-400">
-          {tab === 'learning'
+          {tab === 'due'
+            ? 'На сегодня всё повторено. Возвращайтесь завтра.'
+            : tab === 'learning'
             ? 'Пока пусто — добавьте видео и начните учить слова.'
             : tab === 'learned'
               ? 'Здесь появятся слова, которые вы стабильно вспоминаете 3 недели и дольше.'
@@ -100,7 +127,7 @@ export function Dictionary({ words, decks, onMarkKnown, onUnmarkKnown, onOpenVid
               <span className="min-w-28 text-sm font-bold lowercase text-ink-900">{w.word}</span>
               <span className="flex-1 text-sm text-ink-600">{w.translation || '—'}</span>
               <span className="text-[11px] text-ink-400">
-                {tab === 'learning' ? describeInterval(w.srs) : ''}
+                {tab === 'learning' || tab === 'due' ? describeInterval(w.srs) : ''}
               </span>
               <span className="flex items-center gap-1">
                 {w.sources.slice(0, 2).map((id) => (
@@ -142,4 +169,12 @@ export function Dictionary({ words, decks, onMarkKnown, onUnmarkKnown, onOpenVid
       )}
     </main>
   );
+}
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
 }

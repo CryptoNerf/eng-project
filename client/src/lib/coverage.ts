@@ -202,7 +202,10 @@ export function readinessOf(
     // floor, not round: «знакомо 90%» must never appear while the bar still
     // asks for more words
     pct: Math.floor((known / cov.total) * 100),
-    unknownEvery: unknown > 0 ? Math.round(cov.total / unknown) : 0,
+    // floor, like the percentage: at 89.7% known this must read «каждое 9-е»,
+    // not «каждое 10-е» — otherwise the rung «выучите 1 слово → каждое 10-е»
+    // showed the ratio the user was supposedly already at
+    unknownEvery: unknown > 0 ? Math.floor(cov.total / unknown) : 0,
     ready,
     comfortable: known >= needComfort,
     plan: planComfort.slice(0, readyCount),

@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import type { DeckMeta } from '../lib/types';
 import { tiltFor } from '../lib/palette';
 import { decodeCoverage, readinessOf } from '../lib/coverage';
+import { CARDS_VERSION } from '../lib/words';
 import { pctMastered, type WordsMap } from '../lib/vocab';
 import { BookIcon, TrashIcon } from './Icons';
 import { ReadinessBar } from './ReadinessBar';
@@ -49,8 +50,14 @@ export function DeckList({
           // «понятно X%» beats «знаете X%»: it answers whether this video is
           // watchable today. Decks built before coverage fall back to the old
           // number until they are opened and rebuilt.
+          // A deck built by an older pipeline is rebuilt when opened, so its
+          // stored coverage describes a card set that no longer exists —
+          // showing readiness from it contradicted the deck's own header.
+          const stale = (d.builderVersion ?? 1) < CARDS_VERSION;
           const readiness =
-            knownRank === null ? null : readinessOf(decodeCoverage(d), words, knownRank);
+            knownRank === null || stale
+              ? null
+              : readinessOf(decodeCoverage(d), words, knownRank);
           const pct = readiness ? null : pctMastered(d.wordIds, words);
           return (
           <div

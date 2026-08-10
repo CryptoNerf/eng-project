@@ -51,7 +51,7 @@ import { VideoHeader } from './components/VideoHeader';
 import { Toolbar, type SortKey, type StatusKey } from './components/Toolbar';
 import { WordCard } from './components/WordCard';
 import { StudyView } from './components/StudyView';
-import { Dictionary } from './components/Dictionary';
+import { Dictionary, type DictTab } from './components/Dictionary';
 import { Logo } from './components/Logo';
 import { IngestOverlay } from './components/IngestOverlay';
 import { LoginModal } from './components/LoginModal';
@@ -60,7 +60,6 @@ import { WatchView } from './components/WatchView';
 import { WatchSummary } from './components/WatchSummary';
 import { ChapterList } from './components/ChapterList';
 import { LevelTest } from './components/LevelTest';
-import { BrainIcon } from './components/Icons';
 
 const DEFAULT_FILTER: Difficulty[] = ['medium', 'hard'];
 const STUDY_SESSION_MAX = 40;
@@ -74,6 +73,7 @@ export default function App() {
   const [decksLoading, setDecksLoading] = useState(true);
   const [deck, setDeck] = useState<Deck | null>(null);
   const [showDict, setShowDict] = useState(false);
+  const [dictTab, setDictTab] = useState<DictTab>('learning');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [translating, setTranslating] = useState(false);
@@ -939,6 +939,9 @@ export default function App() {
         <Dictionary
           words={words}
           decks={decks}
+          tab={dictTab}
+          onTab={setDictTab}
+          onReview={startGlobalReview}
           onMarkKnown={(w) => markKnownWord(w.word, w.translation)}
           onUnmarkKnown={unmarkKnown}
           onOpenVideo={openDeckById}
@@ -962,6 +965,19 @@ export default function App() {
                   сегодня: {todayReviews} повт.
                 </span>
               )}
+              {dueTodayCount > 0 && (
+                <button
+                  onClick={() => {
+                    setDictTab('due');
+                    setShowDict(true);
+                    track('dict_opened', { from: 'due_chip' });
+                  }}
+                  className="border border-ink-900 bg-[#f7dd4b] px-3 py-1.5 font-bold text-ink-900 transition hover:opacity-90"
+                  title="Показать слова, которые пора повторить"
+                >
+                  к повторению: {dueTodayCount}
+                </button>
+              )}
               <button
                 onClick={() => setLevelTest(true)}
                 className={`border px-3 py-1.5 transition hover:bg-ink-100 ${
@@ -976,18 +992,6 @@ export default function App() {
                   : 'проверить словарь'}
               </button>
             </div>
-          )}
-
-          {dueTodayCount > 0 && (
-            <button
-              onClick={startGlobalReview}
-              disabled={loading}
-              className="mx-auto mb-6 inline-flex items-center gap-2 border-2 border-ink-900 bg-[#c2401f] px-6 py-3 text-base font-bold text-white transition hover:bg-[#a83519] disabled:opacity-50"
-            >
-              <BrainIcon className="h-5 w-5" />
-              повторить сегодня: {dueTodayCount}{' '}
-              {plural(dueTodayCount, 'слово', 'слова', 'слов')}
-            </button>
           )}
 
           <p className="mx-auto mb-6 max-w-xl text-center text-base text-ink-500">
