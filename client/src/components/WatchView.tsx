@@ -59,6 +59,9 @@ export function WatchView({
   const [ru, setRu] = useState<Map<number, string>>(new Map());
   const seenRef = useRef<Set<string>>(new Set());
   const ruPending = useRef<Set<number>>(new Set());
+  // attempts per line: a sentence the translator keeps echoing back must not
+  // be retried forever by the safety net below
+  const ruTries = useRef<Map<number, number>>(new Map());
 
   const cardByKey = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   // the deck lemmatized with the video's own vocabulary — tag words the same
@@ -66,6 +69,10 @@ export function WatchView({
   const vocab = useMemo(() => transcriptVocab(segments), [segments]);
   // cues are cut by display timing; regroup them into whole sentences
   const lines = useMemo<Line[]>(() => buildLines(segments), [segments]);
+  useEffect(() => {
+    ruPending.current.clear();
+    ruTries.current.clear();
+  }, [lines]);
   const linesRef = useRef<Line[]>(lines);
   linesRef.current = lines;
 
@@ -146,47 +153,125 @@ export function WatchView({
   /* ---------- translate lines lazily, as they come into view ---------- */
   useEffect(() => {
     if (!showRu || !listRef.current || typeof IntersectionObserver === 'undefined') return;
-    let queue: number[] = [];
+    const queue: number[] = [];
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let pumping = false;
+    let stopped = false;
 
-    const flush = async () => {
-      const batch = queue.filter((i) => !ruPending.current.has(i)).slice(0, 12);
-      queue = [];
-      if (batch.length === 0) return;
-      batch.forEach((i) => ruPending.current.add(i));
+    /**
+     * Drain the whole queue, twelve lines per request.
+     *
+     * The earlier version took `slice(0, 12)` and then cleared the queue, so
+     * everything past the twelfth line was dropped — and since those elements
+     * were already intersecting, the observer never fired for them again and
+     * they stayed untranslated for good. One screenful plus the 200px margin
+     * is easily more than twelve lines, which is why translations came out
+     * patchy.
+     */
+    const pump = async () => {
+      if (pumping) return;
+      pumping = true;
       try {
-        const translated = await translateBatch(batch.map((i) => lines[i].text));
-        setRu((prev) => {
-          const next = new Map(prev);
-          batch.forEach((i, k) => next.set(i, translated[k]));
-          return next;
-        });
-      } catch {
-        batch.forEach((i) => ruPending.current.delete(i)); // allow a retry
+        while (queue.length && !stopped) {
+          const batch: number[] = [];
+          while (queue.length && batch.length < 12) {
+            const i = queue.shift()!;
+            if (!ruPending.current.has(i)) batch.push(i);
+          }
+          if (batch.length === 0) continue;
+          batch.forEach((i) => {
+            ruPending.current.add(i);
+            ruTries.current.set(i, (ruTries.current.get(i) ?? 0) + 1);
+          });
+          try {
+            const translated = await translateBatch(batch.map((i) => lines[i].text));
+            if (stopped) return;
+            setRu((prev) => {
+              const next = new Map(prev);
+              batch.forEach((i, k) => {
+                const ru = translated[k];
+                // translateBatch echoes the source back when a request fails —
+                // storing that would show English twice and never retry
+                if (ru && ru !== lines[i].text) next.set(i, ru);
+                else ruPending.current.delete(i);
+              });
+              return next;
+            });
+          } catch {
+            batch.forEach((i) => ruPending.current.delete(i)); // allow a retry
+          }
+        }
+      } finally {
+        pumping = false;
       }
+    };
+
+    const enqueue = (i: number) => {
+      if (Number.isNaN(i) || i < 0 || i >= lines.length) return;
+      if (ruPending.current.has(i) || queue.includes(i)) return;
+      if ((ruTries.current.get(i) ?? 0) >= 2) return;
+      queue.push(i);
+    };
+
+    const schedule = () => {
+      if (!queue.length) return;
+      clearTimeout(timer);
+      timer = setTimeout(pump, 150); // group a screenful into one batch
     };
 
     const io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
           if (!e.isIntersecting) continue;
-          const i = Number((e.target as HTMLElement).dataset.line);
-          if (!Number.isNaN(i) && !ruPending.current.has(i)) queue.push(i);
+          enqueue(Number((e.target as HTMLElement).dataset.line));
         }
-        if (queue.length) {
-          clearTimeout(timer);
-          timer = setTimeout(flush, 150); // group a screenful into one batch
-        }
+        schedule();
       },
       { root: listRef.current, rootMargin: '200px' },
     );
 
     listRef.current.querySelectorAll('[data-line]').forEach((el) => io.observe(el));
     return () => {
+      stopped = true;
       io.disconnect();
       clearTimeout(timer);
     };
   }, [showRu, lines]);
+
+  // Safety net: whatever the observer missed, the line being spoken right now
+  // must always have its translation — plus a few ahead, so it is ready in time.
+  useEffect(() => {
+    if (!showRu || current < 0) return;
+    const wanted: number[] = [];
+    for (let i = current; i < Math.min(lines.length, current + 4); i++) {
+      if (ru.has(i) || ruPending.current.has(i)) continue;
+      if ((ruTries.current.get(i) ?? 0) >= 2) continue;
+      wanted.push(i);
+    }
+    if (wanted.length === 0) return;
+    let cancelled = false;
+    wanted.forEach((i) => {
+      ruPending.current.add(i);
+      ruTries.current.set(i, (ruTries.current.get(i) ?? 0) + 1);
+    });
+    translateBatch(wanted.map((i) => lines[i].text))
+      .then((translated) => {
+        if (cancelled) return;
+        setRu((prev) => {
+          const next = new Map(prev);
+          wanted.forEach((i, k) => {
+            const t = translated[k];
+            if (t && t !== lines[i].text) next.set(i, t);
+            else ruPending.current.delete(i);
+          });
+          return next;
+        });
+      })
+      .catch(() => wanted.forEach((i) => ruPending.current.delete(i)));
+    return () => {
+      cancelled = true;
+    };
+  }, [current, showRu, lines, ru]);
 
   /* ---------- keep the active line in view ---------- */
   useEffect(() => {

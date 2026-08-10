@@ -15,7 +15,7 @@ export const UNRANKED = 100000;
 
 // Bump when the card-building pipeline changes meaningfully — decks built
 // with an older version are rebuilt from the cached transcript on open.
-export const CARDS_VERSION = 5;
+export const CARDS_VERSION = 6;
 
 const MAX_EXAMPLES = 5;
 
@@ -134,6 +134,43 @@ export function normalizeWord(raw: string): string | null {
   if (!/[aeiouy]/.test(w)) return null;
   if (!/[a-z]/.test(w)) return null;
   return w;
+}
+
+// Negative contractions hide their function word behind the apostrophe:
+// «don't» is «do», «wouldn't» is «would». Mapped so they can be recognised
+// as the stop-words they are.
+const CONTRACTION_BASE: Record<string, string> = {
+  ain: 'is',
+  aren: 'are',
+  can: 'can',
+  couldn: 'could',
+  didn: 'did',
+  doesn: 'does',
+  don: 'do',
+  hadn: 'had',
+  hasn: 'has',
+  haven: 'have',
+  isn: 'is',
+  mustn: 'must',
+  shouldn: 'should',
+  wasn: 'was',
+  weren: 'were',
+  won: 'will',
+  wouldn: 'would',
+};
+
+/**
+ * True for contractions of function words — «you'd», «I'm», «they're»,
+ * «don't». They are perfectly tappable in watch mode, but as flashcards they
+ * are noise: «you'd = ты бы» teaches nobody anything.
+ */
+function isFunctionContraction(word: string): boolean {
+  const apos = word.indexOf("'");
+  if (apos <= 0) return false;
+  const head = word.slice(0, apos);
+  if (STOPWORDS.has(head)) return true;
+  const base = CONTRACTION_BASE[head];
+  return !!base && STOPWORDS.has(base);
 }
 
 /**
@@ -292,6 +329,7 @@ export function buildCards(t: Transcript): Card[] {
       const w = normalizeWord(raw[i]);
       if (!w) continue;
       if (STOPWORDS.has(w.replace(/'/g, ''))) continue;
+      if (isFunctionContraction(w)) continue;
       const lemma = lemmaOf(w, local);
       if (STOPWORDS.has(lemma.replace(/'/g, ''))) continue;
       keysInUnit.add(lemma);

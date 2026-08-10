@@ -64,6 +64,8 @@ import { BrainIcon } from './components/Icons';
 
 const DEFAULT_FILTER: Difficulty[] = ['medium', 'hard'];
 const STUDY_SESSION_MAX = 40;
+// context sentences translated per card (the card shows the first one)
+const MAX_EXAMPLE_RU = 3;
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -367,35 +369,72 @@ export default function App() {
   }
 
   /* ---------- lazy example translation ---------- */
-  async function translateExamples(card: Card) {
-    const needs = card.examples.filter((ex) => !ex.ru).slice(0, 3);
-    if (needs.length === 0) return;
+  /**
+   * Translate the context sentences of many cards at once and RETURN the
+   * filled-in cards.
+   *
+   * Returning them matters: study sessions used to snapshot their cards first
+   * and only then kick off translation, which wrote into `deck` state — so the
+   * session itself kept the untranslated copies and every card showed English
+   * context only. Batching also replaces up to 40 full deck writes with one.
+   */
+  async function fillExampleTranslations(cards: Card[]): Promise<Card[]> {
+    const need: string[] = [];
+    const seen = new Set<string>();
+    for (const c of cards) {
+      for (const ex of c.examples.slice(0, MAX_EXAMPLE_RU)) {
+        if (!ex.ru && !seen.has(ex.en)) {
+          seen.add(ex.en);
+          need.push(ex.en);
+        }
+      }
+    }
+    if (need.length === 0) return cards;
+
     let translations: string[];
     try {
-      translations = await translateBatch(needs.map((ex) => ex.en));
+      translations = await translateBatch(need);
     } catch {
-      return;
+      return cards; // context stays EN-only rather than blocking the session
     }
+    const byEn = new Map<string, string>();
+    need.forEach((en, i) => {
+      const ru = translations[i];
+      if (ru && ru !== en) byEn.set(en, ru);
+    });
+    if (byEn.size === 0) return cards;
+
+    const apply = (c: Card): Card => {
+      let touched = false;
+      const examples = c.examples.map((ex, i) => {
+        if (ex.ru || i >= MAX_EXAMPLE_RU) return ex;
+        const ru = byEn.get(ex.en);
+        if (!ru) return ex;
+        touched = true;
+        return { ...ex, ru };
+      });
+      return touched ? { ...c, examples } : c;
+    };
+
+    // the same sentences often appear in other cards — fill the whole deck once
     setDeck((prev) => {
       if (!prev) return prev;
-      const cards = prev.cards.map((c) => {
-        if (c.id !== card.id) return c;
-        let k = 0;
-        const examples = c.examples.map((ex) =>
-          ex.ru ? ex : { ...ex, ru: translations[k++] },
-        );
-        return { ...c, examples };
-      });
+      const updated = prev.cards.map(apply);
       if (repo) {
         repo
-          .saveCards(prev.videoId, cards)
+          .saveCards(prev.videoId, updated)
           .catch((e) => console.warn('Не удалось сохранить перевод примера:', e));
       }
-      return { ...prev, cards };
+      return { ...prev, cards: updated };
     });
+
+    return cards.map(apply);
   }
 
-  /* ---------- global word state ---------- */
+  /** Single-card path: revealing a card in the grid. */
+  async function translateExamples(card: Card) {
+    await fillExampleTranslations([card]);
+  }
 
   function persistWord(ws: WordState) {
     setWords((m) => new Map(m).set(ws.word, ws));
@@ -627,10 +666,10 @@ export default function App() {
     const pool = (due.length ? due : pool0).slice(0, STUDY_SESSION_MAX);
     if (pool.length === 0) return;
     setTranslating(true);
-    await Promise.all(pool.filter((c) => !c.examples[0]?.ru).map(translateExamples));
+    const ready = await fillExampleTranslations(pool);
     setTranslating(false);
-    track('study_started', { cards: pool.length });
-    setStudyCards(pool.map((c) => ({ ...c, videoId: deck.videoId })));
+    track('study_started', { cards: ready.length });
+    setStudyCards(ready.map((c) => ({ ...c, videoId: deck.videoId })));
   }
 
   /**
@@ -646,10 +685,10 @@ export default function App() {
       .slice(0, STUDY_SESSION_MAX);
     if (pool.length === 0) return;
     setTranslating(true);
-    await Promise.all(pool.filter((c) => !c.examples[0]?.ru).map(translateExamples));
+    const ready = await fillExampleTranslations(pool);
     setTranslating(false);
-    track('study_started', { cards: pool.length, mode: 'plan' });
-    setStudyCards(pool.map((c) => ({ ...c, videoId: deck.videoId })));
+    track('study_started', { cards: ready.length, mode: 'plan' });
+    setStudyCards(ready.map((c) => ({ ...c, videoId: deck.videoId })));
   }
 
   /** «Повторить сегодня»: due words from ALL videos, each with its own context. */
