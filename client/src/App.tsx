@@ -52,6 +52,7 @@ import { Toolbar, type SortKey, type StatusKey } from './components/Toolbar';
 import { WordCard } from './components/WordCard';
 import { StudyView } from './components/StudyView';
 import { Dictionary, type DictTab } from './components/Dictionary';
+import { Guide } from './components/Guide';
 import { Logo } from './components/Logo';
 import { IngestOverlay } from './components/IngestOverlay';
 import { LoginModal } from './components/LoginModal';
@@ -74,6 +75,7 @@ export default function App() {
   const [deck, setDeck] = useState<Deck | null>(null);
   const [showDict, setShowDict] = useState(false);
   const [dictTab, setDictTab] = useState<DictTab>('learning');
+  const [showGuide, setShowGuide] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [translating, setTranslating] = useState(false);
@@ -809,6 +811,7 @@ export default function App() {
   function goHome() {
     setDeck(null);
     setShowDict(false);
+    setShowGuide(false);
   }
 
   function exportTsv() {
@@ -839,13 +842,23 @@ export default function App() {
         onHome={goHome}
         onDict={() => {
           setDeck(null);
+          setShowGuide(false);
           setShowDict(true);
           track('dict_opened');
         }}
         dictActive={showDict}
+        onGuide={() => {
+          setDeck(null);
+          setShowDict(false);
+          setShowGuide(true);
+          track('guide_opened');
+        }}
+        guideActive={showGuide}
       />
 
-      {deck ? (
+      {showGuide ? (
+        <Guide />
+      ) : deck ? (
         <main className="px-4 pb-24 pt-6">
           <VideoHeader
             deck={deck}
@@ -969,6 +982,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setDictTab('due');
+                    setShowGuide(false);
                     setShowDict(true);
                     track('dict_opened', { from: 'due_chip' });
                   }}
@@ -1127,9 +1141,20 @@ interface HeaderProps {
   onHome: () => void;
   onDict: () => void;
   dictActive: boolean;
+  onGuide: () => void;
+  guideActive: boolean;
 }
 
-function Header({ user, repo, onLogin, onHome, onDict, dictActive }: HeaderProps) {
+function Header({
+  user,
+  repo,
+  onLogin,
+  onHome,
+  onDict,
+  dictActive,
+  onGuide,
+  guideActive,
+}: HeaderProps) {
   return (
     <header className="border-b border-ink-900 bg-[#f4f2ea] pt-[env(safe-area-inset-top)]">
       <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4">
@@ -1139,6 +1164,18 @@ function Header({ user, repo, onLogin, onHome, onDict, dictActive }: HeaderProps
         </span>
 
         <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
+          <button
+            onClick={onGuide}
+            title="Как устроено изучение в приложении"
+            className={`shrink-0 border px-2.5 py-1.5 text-xs font-bold transition sm:px-3 ${
+              guideActive
+                ? 'border-ink-900 bg-ink-900 text-white'
+                : 'border-ink-900 bg-white text-ink-900 hover:bg-ink-100'
+            }`}
+          >
+            <span className="lg:hidden">механика</span>
+            <span className="hidden lg:inline">механика изучения</span>
+          </button>
           <button
             onClick={onDict}
             className={`shrink-0 border px-2.5 py-1.5 text-xs font-bold transition sm:px-3 ${
