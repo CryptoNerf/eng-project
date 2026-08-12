@@ -15,7 +15,7 @@ export const UNRANKED = 100000;
 
 // Bump when the card-building pipeline changes meaningfully — decks built
 // with an older version are rebuilt from the cached transcript on open.
-export const CARDS_VERSION = 6;
+export const CARDS_VERSION = 7;
 
 const MAX_EXAMPLES = 5;
 
@@ -42,20 +42,26 @@ function suffixCandidates(w: string): string[] {
   if (w.endsWith('s') && !w.endsWith('ss')) push(w.slice(0, -1));
   if (w.endsWith('es')) push(w.slice(0, -2));
 
-  // past: studied -> study, walked -> walk, loved -> love, stopped -> stop
+  // past: studied -> study, loved -> love, walked -> walk, stopped -> stop
   if (w.endsWith('ied') && w.length > 4) push(w.slice(0, -3) + 'y');
   if (w.endsWith('ed') && !w.endsWith('eed')) {
     const base = w.slice(0, -2);
-    push(base);
-    push(w.slice(0, -1)); // loved -> love
+    // «named» must try «name» BEFORE «nam»: both are real words, and whichever
+    // comes first wins the dictionary check. Dropping only the «d» is the more
+    // specific hypothesis, so it goes first — «walked» simply fails on
+    // «walke» and falls through to «walk».
+    push(w.slice(0, -1)); // named -> name, rated -> rate, cared -> care
+    push(base); // walked -> walk, heated -> heat
     if (/([b-df-hj-np-tv-z])\1$/.test(base)) push(base.slice(0, -1)); // stopped -> stop
   }
 
   // gerund: making -> make, going -> go, running -> run
   if (w.endsWith('ing') && w.length >= 6) {
     const base = w.slice(0, -3);
-    push(base);
+    // same trap: «coming» → «come», not «com» (which the web-crawled
+    // frequency list happens to contain)
     push(base + 'e');
+    push(base);
     if (/([b-df-hj-np-tv-z])\1$/.test(base)) push(base.slice(0, -1)); // running -> run
   }
 
