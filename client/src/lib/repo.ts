@@ -1,11 +1,15 @@
 // Repository layer: one interface, two backends.
-// CloudRepo → Firestore under users/{uid} (offline-capable via persistent cache).
-// LocalRepo → localStorage (fallback when auth is unavailable).
+// CloudRepo → Firestore under spaces/{spaceId} (offline-capable via cache).
+// LocalRepo → localStorage (fallback when the cloud is unavailable).
+//
+// The subtree is addressed by a hash of the sync key, not by an account: the
+// app stores no e-mail, no name and no OAuth identity (see lib/space.ts).
 //
 // Data layout (two-layer model):
 //   decks/{videoId} + decks/{videoId}/cards/chunk_N — per-video cards/examples
-//   words/{word}   — GLOBAL per-user word state (SRS shared across videos)
+//   words/{word}   — GLOBAL word state (SRS shared across videos)
 //   stats/summary  — daily review counters (streak is computed client-side)
+//   stats/profile  — measured vocabulary level
 
 import {
   collection,
@@ -74,9 +78,9 @@ function sanitizeCards(cards: Card[]): Card[] {
 
 /* ------------------------------ CloudRepo ------------------------------ */
 
-export function cloudRepo(uid: string): Repo {
-  const userDoc = (...segs: string[]) => doc(db, 'users', uid, ...segs);
-  const userCol = (...segs: string[]) => collection(db, 'users', uid, ...segs);
+export function cloudRepo(spaceId: string): Repo {
+  const userDoc = (...segs: string[]) => doc(db, 'spaces', spaceId, ...segs);
+  const userCol = (...segs: string[]) => collection(db, 'spaces', spaceId, ...segs);
 
   return {
     kind: 'cloud',
@@ -142,7 +146,6 @@ export function cloudRepo(uid: string): Repo {
       const batch = writeBatch(db);
       chunksSnap.forEach((c) => batch.delete(c.ref));
       batch.delete(userDoc('decks', videoId));
-      batch.delete(userDoc('progress', videoId)); // legacy
       await batch.commit();
     },
 
@@ -186,48 +189,74 @@ export function cloudRepo(uid: string): Repo {
   };
 }
 
-/** Migrate legacy per-deck progress docs into global words/. Cloud only. */
-export async function migrateProgressToWords(repo: Repo, uid: string): Promise<number> {
+/**
+ * One-time move of a legacy account subtree (users/{uid}) into a sync space.
+ *
+ * Accounts are gone — identity is a local key now — so everything a signed-in
+ * user had must be carried over before their session disappears. Runs only
+ * when the space is still empty, so it can never overwrite newer data.
+ * Nothing is deleted: the old subtree stays until it is removed by hand.
+ */
+export async function migrateAccountToSpace(uid: string, repo: Repo): Promise<number> {
   if (repo.kind !== 'cloud') return 0;
-  const existing = await repo.listWords();
-  if (existing.length > 0) return 0;
+  const existing = await repo.listDecks().catch(() => []);
+  const existingWords = await repo.listWords().catch(() => []);
+  if (existing.length > 0 || existingWords.length > 0) return 0;
 
-  const progSnap = await getDocs(collection(db, 'users', uid, 'progress'));
-  if (progSnap.empty) return 0;
+  const accountCol = (...segs: string[]) => collection(db, 'users', uid, ...segs);
+  const accountDoc = (...segs: string[]) => doc(db, 'users', uid, ...segs);
 
-  // word -> best srs across decks (keep the longest interval)
-  const merged = new Map<string, WordState>();
-  const decks = await repo.listDecks();
-  const cardsByDeck = new Map<string, Map<string, Card>>();
-  for (const meta of decks) {
-    const full = await repo.loadDeck(meta.videoId);
-    if (full) cardsByDeck.set(meta.videoId, new Map(full.cards.map((c) => [c.id, c])));
+  /* ---------- decks with their card chunks ---------- */
+  const deckSnap = await getDocs(accountCol('decks')).catch(() => null);
+  let moved = 0;
+  for (const d of deckSnap?.docs || []) {
+    const meta = d.data() as DeckMeta;
+    const chunks = await getDocs(query(accountCol('decks', d.id, 'cards'), orderBy('i')));
+    const cards: Card[] = [];
+    chunks.forEach((c) => cards.push(...((c.data().cards as Card[]) || [])));
+    if (cards.length === 0) continue;
+    await repo.saveDeckFull({ ...meta, cards: sanitizeCards(cards), srs: {} });
+    moved++;
   }
 
-  progSnap.forEach((docSnap) => {
-    const videoId = docSnap.id;
-    const srsMap = (docSnap.data().srs || {}) as Deck['srs'];
-    for (const [word, srs] of Object.entries(srsMap)) {
-      const card = cardsByDeck.get(videoId)?.get(word);
-      const prev = merged.get(word);
-      if (!prev || srs.interval > prev.srs.interval) {
-        merged.set(word, {
-          word,
-          status: 'learning',
-          srs,
-          sources: [...(prev?.sources || []), videoId],
-          translation: card?.translation || prev?.translation || '',
-          updatedAt: Date.now(),
-        });
-      } else if (!prev.sources.includes(videoId)) {
-        prev.sources.push(videoId);
-      }
-    }
-  });
+  /* ---------- global word progress ---------- */
+  const wordSnap = await getDocs(accountCol('words')).catch(() => null);
+  let words = (wordSnap?.docs || []).map((w) => w.data() as WordState);
 
-  const words = [...merged.values()];
+  // even older layout: per-deck progress documents
+  if (words.length === 0) {
+    const progSnap = await getDocs(accountCol('progress')).catch(() => null);
+    const merged = new Map<string, WordState>();
+    progSnap?.forEach((docSnap) => {
+      const videoId = docSnap.id;
+      const srsMap = (docSnap.data().srs || {}) as Deck['srs'];
+      for (const [word, srs] of Object.entries(srsMap)) {
+        const prev = merged.get(word);
+        if (!prev || srs.interval > prev.srs.interval) {
+          merged.set(word, {
+            word,
+            status: 'learning',
+            srs,
+            sources: [...(prev?.sources || []), videoId],
+            translation: prev?.translation || '',
+            updatedAt: Date.now(),
+          });
+        } else if (!prev.sources.includes(videoId)) {
+          prev.sources.push(videoId);
+        }
+      }
+    });
+    words = [...merged.values()];
+  }
   if (words.length) await repo.saveWordsBulk(words);
-  return words.length;
+
+  /* ---------- stats and measured level ---------- */
+  const stats = await getDoc(accountDoc('stats', 'summary')).catch(() => null);
+  if (stats?.exists()) await repo.saveStats(stats.data() as Stats);
+  const profile = await getDoc(accountDoc('stats', 'profile')).catch(() => null);
+  if (profile?.exists()) await repo.saveProfile(profile.data() as Profile);
+
+  return moved + words.length;
 }
 
 /* ------------------------------ LocalRepo ------------------------------ */

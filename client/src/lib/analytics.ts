@@ -1,12 +1,9 @@
 // Firebase Analytics (GA4) with a safe no-op fallback: ad blockers, older
 // browsers and unsupported environments must never break the app.
-import {
-  getAnalytics,
-  isSupported,
-  logEvent,
-  setUserId,
-  type Analytics,
-} from 'firebase/analytics';
+//
+// События агрегатные и НЕ привязаны к пользователю: setUserId убран вместе с
+// аккаунтами — приложению больше нечем и незачем метить человека.
+import { getAnalytics, isSupported, logEvent, type Analytics } from 'firebase/analytics';
 import { app } from './firebase';
 
 let analytics: Analytics | null = null;
@@ -27,14 +24,5 @@ export function track(event: string, params?: Params): void {
     if (analytics) logEvent(analytics, event, params);
   } catch {
     /* never let telemetry break the app */
-  }
-}
-
-/** Tie events to the (anonymous) uid so DAU/retention are meaningful. */
-export function identify(uid: string | null): void {
-  try {
-    if (analytics) setUserId(analytics, uid);
-  } catch {
-    /* ignore */
   }
 }

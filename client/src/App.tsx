@@ -4,16 +4,16 @@ import { fetchTranscript, translateBatch, warmupIngest, ApiError } from './lib/a
 import { translateWords } from './lib/translate';
 import { buildCards, countUnits, exampleEnd, CARDS_VERSION, UNRANKED } from './lib/words';
 import { initialSrs, isDue, isLearnedSrs, review } from './lib/srs';
-import { auth } from './lib/firebase';
-import { watchUser, completeEmailLink, pendingEmailLink } from './lib/auth';
-import { track, identify } from './lib/analytics';
+import { watchUser } from './lib/auth';
+import { track } from './lib/analytics';
 import {
   cloudRepo,
   localRepo,
+  migrateAccountToSpace,
   migrateLocalToCloud,
-  migrateProgressToWords,
   type Repo,
 } from './lib/repo';
+import { ensureSpaceKey, saveSpaceKey, spaceIdFor } from './lib/space';
 import {
   bumpStats,
   calcStreak,
@@ -55,7 +55,7 @@ import { Dictionary, type DictTab } from './components/Dictionary';
 import { Guide } from './components/Guide';
 import { Logo } from './components/Logo';
 import { IngestOverlay } from './components/IngestOverlay';
-import { LoginModal } from './components/LoginModal';
+import { SyncModal } from './components/SyncModal';
 import { ClipPlayer, type Clip } from './components/ClipPlayer';
 import { WatchView } from './components/WatchView';
 import { WatchSummary } from './components/WatchSummary';
@@ -70,6 +70,10 @@ const MAX_EXAMPLE_RU = 3;
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [repo, setRepo] = useState<Repo | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  // ключ синхронизации этого браузера — он же удостоверение пользователя
+  const [spaceKey] = useState<string>(() => ensureSpaceKey());
+  const [spaceId, setSpaceId] = useState<string | null>(null);
   const [decks, setDecks] = useState<DeckMeta[]>([]);
   const [decksLoading, setDecksLoading] = useState(true);
   const [deck, setDeck] = useState<Deck | null>(null);
@@ -96,7 +100,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('frequency');
   const [studyCards, setStudyCards] = useState<StudyCard[] | null>(null);
-  const [showLogin, setShowLogin] = useState(false);
+  const [showSync, setShowSync] = useState(false);
   const [clip, setClip] = useState<Clip | null>(null);
   // watch mode: the payoff step — rewatch the video with interactive subtitles
   const [watch, setWatch] = useState<{ segments: Segment[]; startAt?: number } | null>(null);
@@ -112,7 +116,6 @@ export default function App() {
   // token guards against applying async results from a previous video
   const token = useRef(0);
   const deepLinkHandled = useRef(false);
-  const emailLinkHandled = useRef(false);
   const deckCache = useRef(new Map<string, Deck>());
   const warmed = useRef(false);
 
@@ -137,15 +140,23 @@ export default function App() {
     track('clip_played', { video_id: videoId });
   }
 
-  /* ---------- auth → repo ---------- */
+  /* ---------- session ---------- */
   useEffect(() => {
     const unsub = watchUser((u) => {
       setUser(u);
-      setRepo(u ? cloudRepo(u.uid) : localRepo);
-      identify(u?.uid ?? null);
+      setAuthReady(true);
     });
     return unsub;
   }, []);
+
+  // Хранилище — это анонимная сессия (её требуют правила) ПЛЮС адрес
+  // пространства из ключа. Пока сессия неизвестна, репозитория нет вовсе:
+  // иначе приложение успело бы стартовать на localStorage и перенести оттуда
+  // данные ещё до того, как выяснилось, что облако доступно.
+  useEffect(() => {
+    if (!authReady) return;
+    setRepo(user ? (spaceId ? cloudRepo(spaceId) : null) : localRepo);
+  }, [authReady, user, spaceId]);
 
   // tick the elapsed-seconds counter while a busy overlay is up
   useEffect(() => {
@@ -155,6 +166,22 @@ export default function App() {
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 500);
     return () => clearInterval(t);
   }, [busyKind]);
+
+  // адрес данных — хеш ключа; сам ключ на сервер не уходит никогда
+  useEffect(() => {
+    let alive = true;
+    spaceIdFor(spaceKey).then((id) => alive && setSpaceId(id));
+    return () => {
+      alive = false;
+    };
+  }, [spaceKey]);
+
+  /** Переключиться на другой ключ: данные полностью перезагружаются. */
+  function applySpaceKey(key: string) {
+    saveSpaceKey(key);
+    track('sync_key_applied');
+    window.location.reload();
+  }
 
   // chapters describe one video — drop them when the deck changes
   useEffect(() => {
@@ -172,21 +199,14 @@ export default function App() {
     if (!repo) return;
     let cancelled = false;
     (async () => {
-      // Complete an email-link sign-in if we returned via one. NB: linking to
-      // the SAME uid fires no onAuthStateChanged event, so we must keep going
-      // and load data below — early-returning here left the app empty.
-      if (!emailLinkHandled.current && pendingEmailLink()) {
-        emailLinkHandled.current = true;
+      // Аккаунтов больше нет: то, что человек нажил под старой сессией,
+      // переносим в его пространство один раз и молча.
+      if (user) {
         try {
-          await completeEmailLink(() =>
-            window.prompt('Введите e-mail, на который пришла ссылка для входа:'),
-          );
-          const u = auth.currentUser;
-          if (u && !cancelled) setUser({ ...u } as User);
-          // if the link signed into a DIFFERENT account, onAuthStateChanged
-          // re-creates the repo and this effect reruns with the right uid
+          const moved = await migrateAccountToSpace(user.uid, repo);
+          if (moved > 0) track('account_migrated', { items: moved });
         } catch (e) {
-          console.warn('Не удалось завершить вход по ссылке:', e);
+          console.warn('Перенос старых данных не удался:', e);
         }
       }
       try {
@@ -210,11 +230,7 @@ export default function App() {
         })(),
         (async () => {
           try {
-            let ws = await repo.listWords();
-            if (ws.length === 0 && user) {
-              const migrated = await migrateProgressToWords(repo, user.uid).catch(() => 0);
-              if (migrated > 0) ws = await repo.listWords();
-            }
+            const ws = await repo.listWords();
             if (!cancelled) setWords(new Map(ws.map((w) => [w.word, w])));
           } catch (e) {
             console.warn('Не удалось загрузить словарь:', e);
@@ -797,17 +813,6 @@ export default function App() {
     }
   }
 
-  // Linking adds a provider to the same uid, so onAuthStateChanged may not
-  // fire — refresh the header state from the current user explicitly.
-  function afterLogin() {
-    const u = auth.currentUser;
-    if (u) {
-      setUser({ ...u } as User);
-      setRepo(cloudRepo(u.uid));
-    }
-    track('google_linked');
-  }
-
   function goHome() {
     setDeck(null);
     setShowDict(false);
@@ -836,9 +841,11 @@ export default function App() {
       }`}
     >
       <Header
-        user={user}
-        repo={repo}
-        onLogin={() => setShowLogin(true)}
+        cloud={repo?.kind === 'cloud'}
+        onSync={() => {
+          setShowSync(true);
+          track('sync_opened');
+        }}
         onHome={goHome}
         onDict={() => {
           setDeck(null);
@@ -1094,8 +1101,12 @@ export default function App() {
 
       {busyKind && <IngestOverlay elapsed={elapsed} mode={busyKind} />}
 
-      {showLogin && (
-        <LoginModal onClose={() => setShowLogin(false)} onGoogleLinked={afterLogin} />
+      {showSync && (
+        <SyncModal
+          spaceKey={spaceKey}
+          onApplyKey={applySpaceKey}
+          onClose={() => setShowSync(false)}
+        />
       )}
     </>
   );
@@ -1135,9 +1146,9 @@ function AutoLoadMore({ remaining, onMore }: { remaining: number; onMore: () => 
 }
 
 interface HeaderProps {
-  user: User | null;
-  repo: Repo | null;
-  onLogin: () => void;
+  /** true — данные лежат в облаке под ключом синхронизации */
+  cloud: boolean;
+  onSync: () => void;
   onHome: () => void;
   onDict: () => void;
   dictActive: boolean;
@@ -1146,9 +1157,8 @@ interface HeaderProps {
 }
 
 function Header({
-  user,
-  repo,
-  onLogin,
+  cloud,
+  onSync,
   onHome,
   onDict,
   dictActive,
@@ -1187,32 +1197,22 @@ function Header({
             <span className="sm:hidden">словарь</span>
             <span className="hidden sm:inline">мой словарь</span>
           </button>
-          {user && !user.isAnonymous ? (
-            <span
-              className="flex min-w-0 max-w-[34vw] items-center gap-1 border border-ink-900 bg-[#cfe36e] px-2 py-1.5 text-xs font-bold text-ink-900 sm:max-w-[200px] sm:px-2.5"
-              title={user.email || ''}
-            >
-              <span className="shrink-0">✓</span>
-              <span className="truncate">
-                {user.displayName?.split(' ')[0] || user.email?.split('@')[0] || 'аккаунт'}
-              </span>
-            </span>
-          ) : user ? (
-            <button
-              onClick={onLogin}
-              className="shrink-0 border border-ink-900 bg-white px-2.5 py-1.5 text-xs font-bold text-ink-900 transition hover:bg-ink-100 sm:px-3"
-              title="Войти — синхронизировать прогресс между устройствами"
-            >
-              войти
-            </button>
-          ) : repo ? (
-            <span
-              className="shrink-0 border border-dashed border-ink-400 bg-white px-2.5 py-1.5 text-xs font-medium text-ink-400 sm:px-3"
-              title="Облако недоступно, данные хранятся в этом браузере"
-            >
-              локально
-            </span>
-          ) : null}
+          <button
+            onClick={onSync}
+            title={
+              cloud
+                ? 'Ключ синхронизации — открыть прогресс на другом устройстве'
+                : 'Облако недоступно, данные хранятся в этом браузере'
+            }
+            className={`shrink-0 border px-2.5 py-1.5 text-xs font-bold transition sm:px-3 ${
+              cloud
+                ? 'border-ink-900 bg-[#cfe36e] text-ink-900 hover:opacity-90'
+                : 'border-dashed border-ink-400 bg-white text-ink-400'
+            }`}
+          >
+            <span className="sm:hidden">синхр.</span>
+            <span className="hidden sm:inline">синхронизация</span>
+          </button>
         </div>
       </div>
     </header>
