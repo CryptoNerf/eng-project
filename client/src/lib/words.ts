@@ -15,7 +15,7 @@ export const UNRANKED = 100000;
 
 // Bump when the card-building pipeline changes meaningfully — decks built
 // with an older version are rebuilt from the cached transcript on open.
-export const CARDS_VERSION = 7;
+export const CARDS_VERSION = 8;
 
 const MAX_EXAMPLES = 5;
 
@@ -292,6 +292,10 @@ interface Acc {
   count: number;
   examples: Example[];
   seen: Set<string>;
+  /** Occurrences that are NOT at the start of a clause… */
+  mid: number;
+  /** …and how many of those were capitalised. */
+  midCap: number;
 }
 
 /** Build vocabulary cards (no translations yet) from a transcript. */
@@ -300,6 +304,10 @@ export function buildCards(t: Transcript): Card[] {
   const local = transcriptVocab(t.segments);
   const map = new Map<string, Acc>();
 
+  // Evidence for the proper-name filter below, gathered as we go.
+  let midTotal = 0;
+  let midCapTotal = 0;
+
   for (const unit of units) {
     const raw = unit.text.split(/\s+/);
     const tokens = raw.map(normalizeToken);
@@ -307,6 +315,8 @@ export function buildCards(t: Transcript): Card[] {
 
     for (let i = 0; i < tokens.length; i++) {
       if (!tokens[i]) continue;
+      // A capital right after a clause opener proves nothing about the word.
+      const opensClause = i === 0 || /[:"“(—-]$/.test(raw[i - 1]);
 
       // Multi-word units win over their parts: "kind of" is not "kind".
       const phrase = matchPhraseAt(tokens, i, local);
@@ -323,6 +333,8 @@ export function buildCards(t: Transcript): Card[] {
             count: 0,
             examples: [],
             seen: new Set(),
+            mid: 0,
+            midCap: 0,
           };
           map.set(key, acc);
         }
@@ -348,11 +360,22 @@ export function buildCards(t: Transcript): Card[] {
           count: 0,
           examples: [],
           seen: new Set(),
+          mid: 0,
+          midCap: 0,
         };
         map.set(lemma, acc);
       }
       acc.forms.add(w);
       acc.count += 1;
+      if (!opensClause) {
+        const capitalised = /^[A-Z]/.test(raw[i].replace(/^[^A-Za-z]+/, ''));
+        acc.mid += 1;
+        midTotal += 1;
+        if (capitalised) {
+          acc.midCap += 1;
+          midCapTotal += 1;
+        }
+      }
     }
 
     // attach this unit as an example to each unique entry it contains
@@ -365,9 +388,14 @@ export function buildCards(t: Transcript): Card[] {
     }
   }
 
+  // Transcripts that are ALL CAPS (or otherwise oddly cased) make every word
+  // look like a name — in that case the signal is worthless, so don't use it.
+  const casingIsMeaningful = midTotal >= 50 && midCapTotal / midTotal < 0.25;
+
   const cards: Card[] = [];
   for (const acc of map.values()) {
     if (acc.examples.length === 0) continue;
+    if (casingIsMeaningful && isProperName(acc)) continue;
     const rank = acc.isPhrase ? rankForPhrase(acc.lemma) : rankForWord(acc.lemma);
     let difficulty = difficultyForRank(rank);
     // An idiom built from common words is still non-obvious — never "easy".
@@ -420,6 +448,22 @@ export function countUnitsOfLines(
     }
   }
   return { total, counts };
+}
+
+/**
+ * A word the video only ever writes with a capital letter, away from the start
+ * of a clause, is a name — «Tibbles», «Plato», «Amplify Partners», and brands
+ * and acronyms with them. They are not vocabulary and only clutter the deck.
+ *
+ * A word the frequency list knows needs TWO such occurrences: an ordinary word
+ * can be capitalised once by accident, and losing «partner» or «loose» would
+ * be worse than keeping a stray name. Words outside the list are judged on a
+ * single occurrence — for them, being always-capitalised is already the whole
+ * story. A word used both ways survives either test.
+ */
+function isProperName(acc: Acc): boolean {
+  if (acc.isPhrase || acc.mid === 0 || acc.midCap !== acc.mid) return false;
+  return rankForWord(acc.lemma) >= UNRANKED ? acc.mid >= 1 : acc.mid >= 2;
 }
 
 /** A phrase is as rare as its rarest content word (1-letter words aren't ranked). */
