@@ -151,6 +151,12 @@ export function StudyView({ cards, onGrade, onKnown, onPlayClip, paused, onClose
                   </button>
                 </div>
 
+                {current.colloquialOf && (
+                  <p className="mt-1 text-xs font-bold text-ink-500">
+                    разговорное: {current.colloquialOf}
+                  </p>
+                )}
+
                 {revealed ? (
                   <div className="mt-4 w-full animate-fade-up">
                     <p className="text-2xl font-bold text-ink-900">

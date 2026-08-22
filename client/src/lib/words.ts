@@ -2,6 +2,7 @@ import { COMMON_WORDS } from './common-words';
 import { STOPWORDS } from './stopwords';
 import { IRREGULAR, NO_LEMMA } from './irregular-forms';
 import { PHRASE_INDEX } from './phrases';
+import { canonicalOf } from './colloquial';
 import type { Card, Difficulty, Example, Transcript } from './types';
 
 const RANK = new Map<string, number>(COMMON_WORDS.map((w, i) => [w, i]));
@@ -15,7 +16,7 @@ export const UNRANKED = 100000;
 
 // Bump when the card-building pipeline changes meaningfully — decks built
 // with an older version are rebuilt from the cached transcript on open.
-export const CARDS_VERSION = 8;
+export const CARDS_VERSION = 9;
 
 const MAX_EXAMPLES = 5;
 
@@ -179,6 +180,36 @@ function isFunctionContraction(word: string): boolean {
   return !!base && STOPWORDS.has(base);
 }
 
+interface PhraseHit {
+  /** Ключ выражения — как оно записано в словаре («let go»). */
+  parts: string[];
+  /** Сколько токенов оно заняло в тексте: у «let the cat go» это 4. */
+  span: number;
+}
+
+/**
+ * Частицы, которые дополнение может отодвинуть от глагола.
+ *
+ * Наречные («pick it **up**») ведут себя предсказуемо. А «in», «on» и прочие
+ * — ещё и обычные предлоги, и там глагол с ними никак не связан: «gives some
+ * pattern **in** the image» это не «give in». Для них разрыв допускается
+ * только на местоимение, где двусмысленности почти нет.
+ */
+const SEPARABLE_PARTICLES = new Set([
+  'up', 'down', 'out', 'off', 'away', 'back', 'apart', 'together', 'aside', 'go',
+]);
+const PREPOSITION_PARTICLES = new Set(['in', 'on', 'over', 'through', 'around']);
+const OBJECT_PRONOUNS = new Set([
+  'it', 'them', 'him', 'her', 'me', 'us', 'you', 'this', 'that', 'these', 'those', 'himself',
+  'herself', 'myself', 'yourself', 'themselves', 'everything', 'something', 'anything',
+]);
+const OBJECT_HEADS = new Set([
+  'the', 'a', 'an', 'my', 'your', 'his', 'her', 'its', 'our', 'their', 'this', 'that',
+  'these', 'those', 'some', 'any', 'all', 'both', 'every', 'each', 'another', 'other',
+]);
+/** Дальше двух-трёх слов связь глагола с частицей перестаёт быть надёжной. */
+const MAX_PHRASE_GAP = 3;
+
 /**
  * Longest multi-word unit starting at position i, or null. The first word is
  * matched by lemma ("figured out" → "figure out"); the rest must match
@@ -188,11 +219,12 @@ function matchPhraseAt(
   tokens: string[],
   i: number,
   local?: ReadonlySet<string>,
-): string[] | null {
+): PhraseHit | null {
   const first = tokens[i];
   if (!first) return null;
   const lemma = lemmaOf(first, local);
   const keys = first === lemma ? [first] : [first, lemma];
+
   for (const key of keys) {
     const candidates = PHRASE_INDEX.get(key);
     if (!candidates) continue;
@@ -205,10 +237,45 @@ function matchPhraseAt(
           break;
         }
       }
-      if (ok) return parts;
+      if (ok) return { parts, span: parts.length };
+    }
+  }
+
+  // Разделяемые фразовые глаголы: «let the cat go», «pick it up».
+  for (const key of keys) {
+    const candidates = PHRASE_INDEX.get(key);
+    if (!candidates) continue;
+    for (const parts of candidates) {
+      if (parts.length !== 2) continue;
+      const adverbial = SEPARABLE_PARTICLES.has(parts[1]);
+      if (!adverbial && !PREPOSITION_PARTICLES.has(parts[1])) continue;
+      const maxGap = adverbial ? MAX_PHRASE_GAP : 1;
+      for (let gap = 1; gap <= maxGap; gap++) {
+        const end = i + gap + 1;
+        if (end >= tokens.length || tokens[end] !== parts[1]) continue;
+        if (!isObjectGap(tokens, i + 1, gap)) break;
+        return { parts, span: gap + 2 };
+      }
     }
   }
   return null;
+}
+
+/**
+ * Годится ли то, что стоит между глаголом и частицей, на роль дополнения.
+ *
+ * Одно слово — только местоимение («pick **it** up»). Несколько — группа,
+ * начинающаяся с артикля или притяжательного («let **the cat** go»). Так
+ * «let» и «go» из разных предложений не склеятся во что-то несуществующее.
+ */
+function isObjectGap(tokens: string[], from: number, len: number): boolean {
+  const head = tokens[from];
+  if (!head) return false;
+  for (let k = 0; k < len; k++) {
+    const t = tokens[from + k];
+    if (!t || !/^[a-z']+$/.test(t)) return false;
+  }
+  return len === 1 ? OBJECT_PRONOUNS.has(head) : OBJECT_HEADS.has(head);
 }
 
 /* ------------------------------ transcript units ------------------------------ */
@@ -292,6 +359,8 @@ interface Acc {
   count: number;
   examples: Example[];
   seen: Set<string>;
+  /** Разговорное написание — что это на самом деле. */
+  colloquial?: string;
   /** Occurrences that are NOT at the start of a clause… */
   mid: number;
   /** …and how many of those were capitalised. */
@@ -321,8 +390,8 @@ export function buildCards(t: Transcript): Card[] {
       // Multi-word units win over their parts: "kind of" is not "kind".
       const phrase = matchPhraseAt(tokens, i, local);
       if (phrase) {
-        const key = phrase.join(' ');
-        const surface = tokens.slice(i, i + phrase.length).join(' ');
+        const key = phrase.parts.join(' ');
+        const surface = tokens.slice(i, i + phrase.span).join(' ');
         keysInUnit.add(key);
         let acc = map.get(key);
         if (!acc) {
@@ -340,16 +409,22 @@ export function buildCards(t: Transcript): Card[] {
         }
         acc.forms.add(surface);
         acc.count += 1;
-        i += phrase.length - 1; // consume the phrase's tokens
+        i += phrase.span - 1; // consume the phrase's tokens
         continue;
       }
 
-      const w = normalizeWord(raw[i]);
+      // Разговорные написания проверяются ДО всех фильтров: «gonna» и «ain't»
+      // иначе отсеялись бы как служебные, а «ya» — как слишком короткое. При
+      // этом услышать и не узнать их куда вероятнее, чем «going to».
+      const spoken = canonicalOf(tokens[i]);
+      const w = spoken ? tokens[i] : normalizeWord(raw[i]);
       if (!w) continue;
-      if (STOPWORDS.has(w.replace(/'/g, ''))) continue;
-      if (isFunctionContraction(w)) continue;
-      const lemma = lemmaOf(w, local);
-      if (STOPWORDS.has(lemma.replace(/'/g, ''))) continue;
+      if (!spoken) {
+        if (STOPWORDS.has(w.replace(/'/g, ''))) continue;
+        if (isFunctionContraction(w)) continue;
+      }
+      const lemma = spoken ? w : lemmaOf(w, local);
+      if (!spoken && STOPWORDS.has(lemma.replace(/'/g, ''))) continue;
       keysInUnit.add(lemma);
       let acc = map.get(lemma);
       if (!acc) {
@@ -357,6 +432,7 @@ export function buildCards(t: Transcript): Card[] {
           lemma,
           forms: new Set(),
           isPhrase: false,
+          colloquial: spoken,
           count: 0,
           examples: [],
           seen: new Set(),
@@ -396,15 +472,21 @@ export function buildCards(t: Transcript): Card[] {
   for (const acc of map.values()) {
     if (acc.examples.length === 0) continue;
     if (casingIsMeaningful && isProperName(acc)) continue;
-    const rank = acc.isPhrase ? rankForPhrase(acc.lemma) : rankForWord(acc.lemma);
+    // Разговорную форму оцениваем по тому, что за ней стоит: «gonna» не
+    // редкое слово, просто записано так, как звучит.
+    const ranked = acc.colloquial ?? acc.lemma;
+    const rank =
+      acc.isPhrase || ranked.includes(' ') ? rankForPhrase(ranked) : rankForWord(ranked);
     let difficulty = difficultyForRank(rank);
     // An idiom built from common words is still non-obvious — never "easy".
-    if (acc.isPhrase && difficulty === 'easy') difficulty = 'medium';
+    // Разговорное написание тоже: «kinda» очевидно только тому, кто его знает.
+    if ((acc.isPhrase || acc.colloquial) && difficulty === 'easy') difficulty = 'medium';
     cards.push({
       id: acc.lemma,
       word: acc.lemma,
       forms: [...acc.forms].sort(),
       isPhrase: acc.isPhrase || undefined,
+      colloquialOf: acc.colloquial,
       translation: '',
       examples: acc.examples,
       count: acc.count,
@@ -441,7 +523,7 @@ export function countUnitsOfLines(
   const counts = new Map<string, number>();
   for (const line of lines) {
     for (const tok of annotateLine(line.text, local)) {
-      if (!tok.key) continue;
+      if (!tok.key || tok.dup) continue;
       total++;
       if (keys && !keys.has(tok.key)) continue;
       counts.set(tok.key, (counts.get(tok.key) || 0) + 1);
@@ -487,22 +569,46 @@ function rankForPhrase(phrase: string): number {
 export function annotateLine(
   line: string,
   local?: ReadonlySet<string>,
-): { text: string; key: string | null }[] {
+): AnnotatedToken[] {
   const raw = line.split(/(\s+)/); // keep whitespace so the line renders intact
   const words = raw.filter((_, i) => i % 2 === 0);
   const gaps = raw.filter((_, i) => i % 2 === 1);
   const tokens = words.map(normalizeToken);
 
-  const out: { text: string; key: string | null }[] = [];
+  const out: AnnotatedToken[] = [];
   for (let i = 0; i < words.length; i++) {
     const phrase = matchPhraseAt(tokens, i, local);
     if (phrase) {
-      const end = i + phrase.length - 1;
-      const text = words
-        .slice(i, end + 1)
-        .map((w, k) => w + (k < phrase.length - 1 ? gaps[i + k] ?? ' ' : ''))
-        .join('');
-      out.push({ text, key: phrase.join(' ') });
+      const key = phrase.parts.join(' ');
+      const end = i + phrase.span - 1;
+
+      if (phrase.span === phrase.parts.length) {
+        const text = words
+          .slice(i, end + 1)
+          .map((w, k) => w + (k < phrase.span - 1 ? gaps[i + k] ?? ' ' : ''))
+          .join('');
+        out.push({ text, key });
+        if (gaps[end]) out.push({ text: gaps[end], key: null });
+        i = end;
+        continue;
+      }
+
+      // Разделённое выражение: помечаем только глагол и частицу, а дополнение
+      // между ними остаётся обычным словом — по «cat» в «let the cat go» тоже
+      // нужно уметь тапнуть.
+      out.push({ text: words[i], key });
+      if (gaps[i]) out.push({ text: gaps[i], key: null });
+      for (let k = i + 1; k < end; k++) {
+        const t = tokens[k];
+        out.push({
+          text: words[k],
+          key: t.length >= 2 && /[a-z]/.test(t) ? lemmaOf(t, local) : null,
+        });
+        if (gaps[k]) out.push({ text: gaps[k], key: null });
+      }
+      // вторая половина ведёт на ту же карточку, но при подсчёте слов это не
+      // отдельная единица
+      out.push({ text: words[end], key, dup: true });
       if (gaps[end]) out.push({ text: gaps[end], key: null });
       i = end;
       continue;
@@ -513,6 +619,13 @@ export function annotateLine(
     if (gaps[i]) out.push({ text: gaps[i], key: null });
   }
   return out;
+}
+
+export interface AnnotatedToken {
+  text: string;
+  key: string | null;
+  /** Вторая половина разделённого выражения: та же карточка, но не новое слово. */
+  dup?: boolean;
 }
 
 export interface Line {

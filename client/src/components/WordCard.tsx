@@ -92,10 +92,16 @@ export function WordCard({ card, mastered, onReveal, onKnown, onPlayClip }: Prop
             >
               {card.word}
             </span>
-            {card.isPhrase && (
+            {card.colloquialOf ? (
               <span style={{ color: paper.sub }} className="mt-0.5 text-[10px] font-bold">
-                устойчивое выражение
+                разговорное: {card.colloquialOf}
               </span>
+            ) : (
+              card.isPhrase && (
+                <span style={{ color: paper.sub }} className="mt-0.5 text-[10px] font-bold">
+                  устойчивое выражение
+                </span>
+              )
             )}
             <span
               role="button"

@@ -44,6 +44,8 @@ export interface Card {
   word: string; // display form
   forms?: string[]; // surface forms seen in the video (run, running, ran…)
   isPhrase?: boolean; // multi-word unit ("kind of", "figure out")
+  /** Разговорное написание: что это «на самом деле» («cuz» → «because»). */
+  colloquialOf?: string;
   translation: string; // RU ('' until fetched) — most common meaning
   senses?: Sense[]; // other meanings, so multi-sense words are obvious
   examples: Example[];

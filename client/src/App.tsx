@@ -356,7 +356,9 @@ export default function App() {
       try {
         // one request per word returns the main translation AND every
         // dictionary meaning, so multi-sense words are visible on the card
-        translations = await translateWords(chunk.map((c) => c.word));
+        // у разговорных написаний переводим то, что за ними стоит:
+        // «outta» переводчик отдаёт как «сбился», а «out of» — верно
+        translations = await translateWords(chunk.map((c) => c.colloquialOf ?? c.word));
       } catch {
         continue;
       }
