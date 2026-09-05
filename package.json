@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "npm --prefix client run dev",
     "dev:legacy": "concurrently -n server,client -c blue,magenta \"node server/index.js\" \"npm --prefix client run dev\"",
-    "deploy:functions": "firebase deploy --only functions,firestore:rules --force",
+    "deploy:functions": "node functions/scripts/stamp.js && firebase deploy --only functions,firestore:rules --force",
     "check:cookies": "node functions/scripts/check-cookies.mjs",
     "build": "npm --prefix client run build",
     "preview": "npm --prefix client run preview",
