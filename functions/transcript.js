@@ -26,6 +26,21 @@ async function potArgs() {
 // Manual English tracks in preference order; auto tracks tried after.
 const MANUAL_PRIORITY = ['en', 'en-US', 'en-GB'];
 
+// The binary is downloaded at build time, so its age equals the age of the last
+// deploy — and a stale yt-dlp is the usual reason YouTube's bot-check starts
+// firing. Log it once per instance so that is visible without guessing.
+let versionLogged = false;
+async function logVersion() {
+  if (versionLogged) return;
+  versionLogged = true;
+  try {
+    const { stdout } = await execFileAsync(YTDLP, ['--version'], { timeout: 10_000 });
+    console.log('[yt-dlp] version', stdout.trim());
+  } catch (e) {
+    console.warn('[yt-dlp] version unavailable:', e.message);
+  }
+}
+
 /** Extract the 11-char video id from any common YouTube URL form. */
 export function parseVideoId(input) {
   if (!input) return null;
@@ -65,6 +80,7 @@ export async function fetchTranscript(input, opts = {}) {
     throw withCode(new Error('Не удалось распознать ссылку на YouTube-видео.'), 'BAD_URL');
   }
 
+  await logVersion();
   const dir = await mkdtemp(path.join(tmpdir(), 'molly-'));
   try {
     const base = await baseArgs(dir, opts);
@@ -196,7 +212,15 @@ async function loadInfo(dir, base, videoId) {
   } catch (e) {
     const stderr = String(e.stderr || e.message || '');
     if (/Sign in to confirm/i.test(stderr)) {
-      throw withCode(new Error('YouTube требует подтверждение (bot-check с этого IP).'), 'BOT_CHECK', e);
+      // Для логов важен код BOT_CHECK, а пользователю знать про IP незачем:
+      // это наша инфраструктурная проблема, а не его ошибка.
+      throw withCode(
+        new Error(
+          'YouTube сейчас не отдаёт субтитры нашему серверу. Это на нашей стороне — попробуйте позже.',
+        ),
+        'BOT_CHECK',
+        e,
+      );
     }
     if (/Private video|members-only|This video is unavailable|Video unavailable|removed/i.test(stderr)) {
       throw withCode(new Error('Видео недоступно (приватное, удалённое или с ограничением).'), 'NOT_FOUND', e);
